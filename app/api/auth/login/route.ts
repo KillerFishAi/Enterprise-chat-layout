@@ -66,10 +66,15 @@ export async function POST(req: NextRequest) {
       },
     });
 
+    // HTTP 访问时不要设 Secure，否则浏览器不保存 Cookie，登录后无法跳转
+    const useSecureCookie =
+      process.env.COOKIE_SECURE === "true" ||
+      (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
+
     response.cookies.set("token", token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
+      secure: useSecureCookie,
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
     });
