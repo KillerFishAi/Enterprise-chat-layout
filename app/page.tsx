@@ -397,13 +397,20 @@ export default function ChatPage() {
         />
       )}
 
-      {/* App Settings Panel */}
-      <SettingsPanel
-        isOpen={isAppSettingsOpen}
-        onClose={() => setIsAppSettingsOpen(false)}
-        user={currentUser}
-        onLogout={handleLogout}
-      />
+      {/* App Settings Panel - 仅在有当前用户时渲染，避免构建时 prerender 报错 */}
+      {currentUser && (
+        <SettingsPanel
+          isOpen={isAppSettingsOpen}
+          onClose={() => setIsAppSettingsOpen(false)}
+          user={{
+            name: currentUser.name,
+            email: currentUser.email ?? "",
+            department: currentUser.department ?? "",
+            title: currentUser.title ?? "",
+          }}
+          onLogout={handleLogout}
+        />
+      )}
 
       {/* Add Friend Panel */}
       <AddFriendPanel
