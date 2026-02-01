@@ -27,7 +27,9 @@ COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/next.config.mjs ./
+COPY --from=builder /app/server ./server
 
 EXPOSE 3000
 
-CMD ["sh", "-c", "npx prisma migrate deploy && npm start"]
+# 等待数据库就绪后再执行迁移和启动（depends_on 不等待 healthy 时需此步骤）
+CMD ["sh", "-c", "sleep 5 && npx prisma migrate deploy && npm start"]

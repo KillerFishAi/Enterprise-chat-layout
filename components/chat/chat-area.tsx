@@ -15,10 +15,16 @@ interface ChatAreaProps {
     memberCount?: number;
   } | null;
   messages: Message[];
-  onSendMessage: (content: string) => void;
+  onSendMessage: (content: string, attachments?: import("./message-input").FileAttachment[], replyToMessageId?: string) => void;
   onMobileMenuClick?: () => void;
   onSettingsClick?: () => void;
   onAvatarClick?: (senderId: string, senderName: string, senderAvatar?: string) => void;
+  replyingTo?: { id: string; content: string; senderName: string } | null;
+  onCancelReply?: () => void;
+  onReplyMessage?: (message: Message) => void;
+  onDeleteMessage?: (message: Message) => void;
+  onForwardMessage?: (message: Message) => void;
+  onSearchClick?: () => void;
 }
 
 export function ChatArea({
@@ -28,6 +34,12 @@ export function ChatArea({
   onMobileMenuClick,
   onSettingsClick,
   onAvatarClick,
+  replyingTo,
+  onCancelReply,
+  onReplyMessage,
+  onDeleteMessage,
+  onForwardMessage,
+  onSearchClick,
 }: ChatAreaProps) {
   if (!selectedChat) {
     return (
@@ -53,9 +65,20 @@ export function ChatArea({
         memberCount={selectedChat.memberCount}
         onMobileMenuClick={onMobileMenuClick}
         onSettingsClick={onSettingsClick}
+        onSearchClick={onSearchClick}
       />
-      <MessageList messages={messages} onAvatarClick={onAvatarClick} />
-      <MessageInput onSendMessage={onSendMessage} />
+      <MessageList
+        messages={messages}
+        onAvatarClick={onAvatarClick}
+        onReplyMessage={onReplyMessage}
+        onDeleteMessage={onDeleteMessage}
+        onForwardMessage={onForwardMessage}
+      />
+      <MessageInput
+        onSendMessage={onSendMessage}
+        replyingTo={replyingTo}
+        onCancelReply={onCancelReply}
+      />
     </div>
   );
 }

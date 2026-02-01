@@ -26,6 +26,10 @@ export interface Message {
   fileUrl?: string;
   imageUrl?: string;
   videoUrl?: string;
+  readCount?: number;
+  isRead?: boolean;
+  replyTo?: { id: string; content: string; senderName: string; type?: string };
+  revoked?: boolean;
 }
 
 interface MessageListProps {
@@ -363,6 +367,19 @@ export function MessageList({
 
                 {/* Message bubble based on type */}
                 <div className="select-none">
+                  {message.replyTo && (
+                    <div
+                      className={cn(
+                        "mb-1.5 pl-2 border-l-2 rounded-r text-xs truncate",
+                        message.isOwn
+                          ? "border-chat-bubble-own text-chat-bubble-own-foreground/80"
+                          : "border-chat-bubble-other text-chat-bubble-other-foreground/80"
+                      )}
+                    >
+                      <span className="font-medium">{message.replyTo.senderName}</span>
+                      <span className="ml-1 opacity-90">{message.replyTo.content}</span>
+                    </div>
+                  )}
                   {messageType === "text" && (
                     <TextBubble content={message.content} isOwn={message.isOwn} />
                   )}

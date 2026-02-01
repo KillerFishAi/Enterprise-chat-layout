@@ -15,12 +15,20 @@ export interface FileAttachment {
   file?: File;
 }
 
-interface MessageInputProps {
-  onSendMessage: (content: string, attachments?: FileAttachment[]) => void;
-  disabled?: boolean;
+interface ReplyingTo {
+  id: string;
+  content: string;
+  senderName: string;
 }
 
-export function MessageInput({ onSendMessage, disabled }: MessageInputProps) {
+interface MessageInputProps {
+  onSendMessage: (content: string, attachments?: FileAttachment[], replyToMessageId?: string) => void;
+  disabled?: boolean;
+  replyingTo?: ReplyingTo | null;
+  onCancelReply?: () => void;
+}
+
+export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelReply }: MessageInputProps) {
   const [message, setMessage] = useState("");
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const [attachments, setAttachments] = useState<FileAttachment[]>([]);
@@ -31,9 +39,14 @@ export function MessageInput({ onSendMessage, disabled }: MessageInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if ((message.trim() || attachments.length > 0) && !disabled) {
-      onSendMessage(message.trim(), attachments.length > 0 ? attachments : undefined);
+      onSendMessage(
+        message.trim(),
+        attachments.length > 0 ? attachments : undefined,
+        replyingTo?.id
+      );
       setMessage("");
       setAttachments([]);
+      onCancelReply?.();
       // Reset textarea height
       if (textareaRef.current) {
         textareaRef.current.style.height = "auto";
@@ -125,6 +138,19 @@ export function MessageInput({ onSendMessage, disabled }: MessageInputProps) {
 
   return (
     <form onSubmit={handleSubmit} className="bg-secondary shrink-0">
+      {/* Replying to */}
+      {replyingTo && (
+        <div className="px-4 py-2 flex items-center gap-2 border-t border-border bg-muted/50">
+          <span className="text-xs text-muted-foreground shrink-0">回复 {replyingTo.senderName}:</span>
+          <span className="text-xs text-foreground truncate flex-1">{replyingTo.content.slice(0, 50)}{replyingTo.content.length > 50 ? "…" : ""}</span>
+          {onCancelReply && (
+            <button type="button" onClick={onCancelReply} className="p-1 rounded hover:bg-muted text-muted-foreground">
+              <X className="h-4 w-4" />
+              <span className="sr-only">取消回复</span>
+            </button>
+          )}
+        </div>
+      )}
       {/* Attachments preview */}
       {attachments.length > 0 && (
         <div className="px-4 pt-3 flex flex-wrap gap-2">

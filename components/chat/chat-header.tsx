@@ -1,7 +1,7 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { Menu, MoreHorizontal } from "lucide-react";
+import { Menu, MoreHorizontal, Search } from "lucide-react";
 
 interface ChatHeaderProps {
   name: string;
@@ -9,6 +9,7 @@ interface ChatHeaderProps {
   memberCount?: number;
   onMobileMenuClick?: () => void;
   onSettingsClick?: () => void;
+  onSearchClick?: () => void;
 }
 
 export function ChatHeader({
@@ -17,6 +18,7 @@ export function ChatHeader({
   memberCount,
   onMobileMenuClick,
   onSettingsClick,
+  onSearchClick,
 }: ChatHeaderProps) {
   return (
     <header className="flex items-center justify-between px-4 h-14 border-b border-border bg-card shrink-0">
@@ -43,15 +45,28 @@ export function ChatHeader({
         </button>
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon"
-        className="text-muted-foreground hover:text-foreground h-8 w-8"
-        onClick={onSettingsClick}
-      >
-        <MoreHorizontal className="h-4 w-4" />
-        <span className="sr-only">更多选项</span>
-      </Button>
+      <div className="flex items-center gap-1">
+        {onSearchClick && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="text-muted-foreground hover:text-foreground h-8 w-8"
+            onClick={onSearchClick}
+          >
+            <Search className="h-4 w-4" />
+            <span className="sr-only">搜索聊天记录</span>
+          </Button>
+        )}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="text-muted-foreground hover:text-foreground h-8 w-8"
+          onClick={onSettingsClick}
+        >
+          <MoreHorizontal className="h-4 w-4" />
+          <span className="sr-only">更多选项</span>
+        </Button>
+      </div>
     </header>
   );
 }

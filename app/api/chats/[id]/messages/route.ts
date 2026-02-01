@@ -12,18 +12,36 @@ type RouteParams = {
  * 根据消息类型映射返回字段
  * 将数据库的 fileUrl 映射为前端需要的 imageUrl/videoUrl 等
  */
-function mapMessageFields(message: {
-  id: string;
-  content: string;
-  type: MessageType;
-  fileUrl: string | null;
-  fileName: string | null;
-  fileSize: string | null;
-  createdAt: Date;
-  senderId: string;
-  sender: { nickname: string };
-}, currentUserId: string, isNew: boolean = false) {
-  // 基础字段
+function mapMessageFields(
+  message: {
+    id: string;
+    content: string;
+    type: MessageType;
+    fileUrl: string | null;
+    fileName: string | null;
+    fileSize: string | null;
+    createdAt: Date;
+    senderId: string;
+    sender: { nickname: string };
+    _count?: { reads: number };
+    reads?: { userId: string }[];
+    replyTo?: { id: string; content: string; type: MessageType; sender: { nickname: string } } | null;
+  },
+  currentUserId: string,
+  isNew: boolean = false
+) {
+  const isRead = message.reads?.some((r) => r.userId === currentUserId) ?? false;
+  const readCount = message._count?.reads ?? 0;
+  const status: "sent" | "delivered" | "read" =
+    message.senderId === currentUserId
+      ? isNew
+        ? "sent"
+        : isRead
+          ? "read"
+          : readCount > 0
+            ? "delivered"
+            : "sent"
+      : "read";
   const base = {
     id: message.id,
     content: message.content,
@@ -31,11 +49,21 @@ function mapMessageFields(message: {
     senderId: message.senderId,
     senderName: message.sender.nickname,
     isOwn: message.senderId === currentUserId,
-    status: isNew ? ("sent" as const) : ("read" as const),
+    status,
     type: message.type.toLowerCase() as "text" | "image" | "video" | "file",
     fileUrl: message.fileUrl,
     fileName: message.fileName,
     fileSize: message.fileSize,
+    readCount,
+    isRead,
+    replyTo: message.replyTo
+      ? {
+          id: message.replyTo.id,
+          content: message.replyTo.content.slice(0, 100),
+          senderName: message.replyTo.sender.nickname,
+          type: message.replyTo.type.toLowerCase(),
+        }
+      : undefined,
   };
 
   // 根据类型添加特定字段
@@ -73,7 +101,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
 
   const messages = await prisma.message.findMany({
     where: { conversationId: id },
-    include: { sender: true },
+    include: {
+      sender: true,
+      _count: { select: { reads: true } },
+      reads: { where: { userId: payload.userId }, select: { userId: true } },
+      replyTo: {
+        select: { id: true, content: true, type: true, sender: { select: { nickname: true } } },
+      },
+    },
     orderBy: { createdAt: "asc" },
   });
 
@@ -89,6 +124,7 @@ type MessageRequestBody = {
   fileUrl?: string;
   fileName?: string;
   fileSize?: string;
+  replyToMessageId?: string;
 };
 
 // 有效的消息类型
@@ -142,13 +178,29 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   const isMember = await prisma.conversationMember.findFirst({
     where: { conversationId: id, userId: payload.userId },
+    include: { conversation: true },
   });
 
   if (!isMember) {
     return NextResponse.json({ error: "无权访问该会话" }, { status: 403 });
   }
+  if (isMember.conversation.isGroup && isMember.mutedUntil && isMember.mutedUntil > new Date()) {
+    return NextResponse.json({ error: "您已被禁言，暂时无法发送消息" }, { status: 403 });
+  }
 
-  // 创建消息，写入所有字段
+  const replyToMessageId =
+    body.replyToMessageId && body.replyToMessageId.trim()
+      ? body.replyToMessageId.trim()
+      : null;
+  if (replyToMessageId) {
+    const replyTo = await prisma.message.findFirst({
+      where: { id: replyToMessageId, conversationId: id },
+    });
+    if (!replyTo) {
+      return NextResponse.json({ error: "被引用的消息不存在" }, { status: 400 });
+    }
+  }
+
   const created = await prisma.message.create({
     data: {
       conversationId: id,
@@ -158,9 +210,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
       fileUrl: body.fileUrl || null,
       fileName: body.fileName || null,
       fileSize: body.fileSize || null,
+      replyToMessageId: replyToMessageId || undefined,
     },
     include: {
       sender: true,
+      replyTo: {
+        select: { id: true, content: true, type: true, sender: { select: { nickname: true } } },
+      },
     },
   });
 

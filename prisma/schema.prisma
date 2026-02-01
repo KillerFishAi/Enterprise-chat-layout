@@ -23,6 +23,7 @@ model User {
   receivedRequests   FriendRequest[] @relation("FriendRequestsReceived")
   friendships        Friendship[]    @relation("UserToFriends")
   friendsOf         Friendship[]    @relation("FriendToUsers")
+  messageReads       MessageRead[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -47,6 +48,7 @@ model ConversationMember {
   conversation   Conversation @relation(fields: [conversationId], references: [id])
   conversationId String
   role           MemberRole   @default(MEMBER)
+  mutedUntil     DateTime?    // 禁言截止时间，null 表示未禁言
 
   createdAt DateTime @default(now())
 }
@@ -63,8 +65,24 @@ model Message {
   fileUrl  String?
   fileName String?
   fileSize String?
+  replyToMessageId String?
+  replyTo  Message?  @relation("ReplyTo", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies  Message[]  @relation("ReplyTo")
+
+  reads    MessageRead[]
 
   createdAt DateTime @default(now())
+}
+
+model MessageRead {
+  id        String   @id @default(cuid())
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  messageId String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  readAt    DateTime @default(now())
+
+  @@unique([messageId, userId])
 }
 
 model FriendRequest {

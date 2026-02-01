@@ -1,0 +1,43 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/db";
+import { getAuthTokenFromRequest, verifyAuthToken } from "@/lib/auth";
+
+type RouteParams = { params: Promise<{ id: string }> };
+
+/** PUT: 修改群信息（群名称），仅管理员 */
+export async function PUT(req: NextRequest, { params }: RouteParams) {
+  const token = getAuthTokenFromRequest(req);
+  if (!token) {
+    return NextResponse.json({ error: "未登录" }, { status: 401 });
+  }
+  const payload = verifyAuthToken(token);
+  if (!payload) {
+    return NextResponse.json({ error: "无效的令牌" }, { status: 401 });
+  }
+
+  const { id } = await params;
+  const body = (await req.json().catch(() => null)) as { name?: string } | null;
+  if (!body?.name?.trim()) {
+    return NextResponse.json({ error: "群名称不能为空" }, { status: 400 });
+  }
+
+  const membership = await prisma.conversationMember.findFirst({
+    where: { conversationId: id, userId: payload.userId },
+    include: { conversation: true },
+  });
+  if (!membership || !membership.conversation.isGroup) {
+    return NextResponse.json({ error: "会话不存在或不是群聊" }, { status: 404 });
+  }
+  if (membership.role !== "ADMIN") {
+    return NextResponse.json({ error: "仅管理员可修改群信息" }, { status: 403 });
+  }
+
+  await prisma.conversation.update({
+    where: { id },
+    data: { name: body.name.trim() },
+  });
+
+  return NextResponse.json({
+    data: { id, name: body.name.trim() },
+  });
+}

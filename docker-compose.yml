@@ -16,20 +16,47 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   app:
     build: .
     depends_on:
-      db:
-        condition: service_healthy
+      - db
+      - redis
     ports:
       - "3000:3000"
     environment:
       NODE_ENV: production
       DATABASE_URL: postgresql://chat_user:chat_pass@db:5432/chat_app
+      REDIS_URL: redis://redis:6379
       JWT_SECRET: CHANGE_ME_IN_PRODUCTION
       # 用 http 访问时设为 false，否则 Cookie 不会被保存，登录后无法跳转
       COOKIE_SECURE: "false"
     restart: always
 
+  ws:
+    build: .
+    command: ["node", "server/ws-server.js"]
+    environment:
+      REDIS_URL: redis://redis:6379
+      SOCKET_PORT: "3001"
+    depends_on:
+      - redis
+    ports:
+      - "3001:3001"
+    restart: always
+
 volumes:
   db-data:
+  redis-data:

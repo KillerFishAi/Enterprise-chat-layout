@@ -1,10 +1,13 @@
 "use client";
 
 import { useState, useCallback, useEffect, useRef } from "react";
+import { useChatStream } from "@/hooks/use-chat-stream";
 import { useRouter } from "next/navigation";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatArea } from "@/components/chat/chat-area";
 import { GroupSettings, type GroupMember } from "@/components/chat/group-settings";
+import { AddGroupMemberDialog } from "@/components/chat/add-group-member-dialog";
+import { SearchChatDialog } from "@/components/chat/search-chat-dialog";
 import { SettingsPanel } from "@/components/chat/settings-panel";
 import { AddFriendPanel } from "@/components/chat/add-friend-panel";
 import { UserProfilePopup } from "@/components/chat/user-profile-popup";
@@ -21,40 +24,6 @@ type ChatSummary = {
   memberCount?: number;
   online?: boolean;
   status?: string;
-};
-
-const mockGroupMembers: Record<string, GroupMember[]> = {
-  "1": [
-    { id: "u1", name: "张明", role: "admin", status: "产品经理" },
-    { id: "u2", name: "陈晓", role: "member", status: "设计师" },
-    { id: "u3", name: "李伟", role: "member", status: "开发工程师" },
-    { id: "u4", name: "王芳", role: "member", status: "市场主管" },
-    { id: "u5", name: "刘强", role: "member", status: "开发工程师" },
-    { id: "u6", name: "赵敏", role: "member", status: "测试工程师" },
-    { id: "u7", name: "孙磊", role: "member", status: "运维工程师" },
-    { id: "u8", name: "许萍", role: "member", status: "数据分析师" },
-  ],
-  "4": [
-    { id: "u1", name: "张明", role: "admin", status: "技术负责人" },
-    { id: "u3", name: "李伟", role: "member", status: "高级开发" },
-    { id: "u5", name: "刘强", role: "member", status: "开发工程师" },
-    { id: "u6", name: "赵敏", role: "member", status: "测试工程师" },
-    { id: "u7", name: "孙磊", role: "member", status: "运维工程师" },
-    { id: "u9", name: "徐超", role: "member", status: "后端开发" },
-    { id: "u10", name: "韩雪", role: "member", status: "前端开发" },
-    { id: "u11", name: "黄伟", role: "member", status: "全栈开发" },
-    { id: "u12", name: "郑佳", role: "member", status: "移动端开发" },
-    { id: "u13", name: "吴杰", role: "member", status: "平台工程师" },
-    { id: "u14", name: "周婷", role: "member", status: "安全工程师" },
-    { id: "u15", name: "钱坤", role: "member", status: "运维工程师" },
-  ],
-  "7": [
-    { id: "u1", name: "张明", role: "member", status: "产品部" },
-    { id: "u4", name: "王芳", role: "admin", status: "市场主管" },
-    { id: "u16", name: "杨蕾", role: "member", status: "内容编辑" },
-    { id: "u17", name: "何涛", role: "member", status: "新媒体运营" },
-    { id: "u18", name: "林娜", role: "member", status: "品牌设计师" },
-  ],
 };
 
 export default function ChatPage() {
@@ -78,12 +47,16 @@ export default function ChatPage() {
   } | null>(null);
   const [friendsList, setFriendsList] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<{
+    id?: string;
     name: string;
     email?: string;
     department?: string;
     title?: string;
   } | null>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const [groupMembersByChat, setGroupMembersByChat] = useState<Record<string, GroupMember[]>>({});
+  const [isAddGroupMemberOpen, setIsAddGroupMemberOpen] = useState(false);
+  const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; senderName: string } | null>(null);
+  const [isSearchOpen, setIsSearchOpen] = useState(false);
 
   // 初始加载会话和联系人
   useEffect(() => {
@@ -101,6 +74,7 @@ export default function ChatPage() {
         if (meRes.ok) {
           const meJson = (await meRes.json()) as {
             data?: {
+              id?: string;
               nickname?: string;
               email?: string;
               department?: string;
@@ -109,6 +83,7 @@ export default function ChatPage() {
           };
           if (meJson.data) {
             setCurrentUser({
+              id: meJson.data.id,
               name: meJson.data.nickname ?? "未命名用户",
               email: meJson.data.email,
               department: meJson.data.department,
@@ -150,6 +125,17 @@ export default function ChatPage() {
     void loadBaseData();
   }, [router]);
 
+  // 在线状态心跳：每 30 秒上报一次
+  useEffect(() => {
+    if (!currentUser?.id) return;
+    const tick = () => {
+      fetch("/api/me/online", { method: "POST" }).catch(() => {});
+    };
+    tick();
+    const interval = setInterval(tick, 30000);
+    return () => clearInterval(interval);
+  }, [currentUser?.id]);
+
   // 切换会话时加载消息
   useEffect(() => {
     if (!selectedChatId) return;
@@ -159,11 +145,17 @@ export default function ChatPage() {
         const res = await fetch(`/api/chats/${selectedChatId}/messages`);
         if (!res.ok) return;
         const json = (await res.json()) as { data?: Message[] };
-        if (Array.isArray(json.data)) {
+        if (Array.isArray(json.data) && json.data.length > 0) {
           setMessages((prev) => ({
             ...prev,
             [selectedChatId]: json.data!,
           }));
+          const ids = json.data!.map((m) => m.id);
+          await fetch(`/api/chats/${selectedChatId}/read`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messageIds: ids }),
+          });
         }
       } catch (err) {
         console.error(err);
@@ -171,46 +163,40 @@ export default function ChatPage() {
     };
 
     void loadMessages();
-
-    // 建立 SSE 连接，实时接收新消息
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-
-    const es = new EventSource(`/api/chats/${selectedChatId}/stream`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data) as Message;
-        setMessages((prev) => {
-          const list = prev[selectedChatId] ?? [];
-          if (list.some((m) => m.id === data.id)) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [selectedChatId]: [...list, data],
-          };
-        });
-      } catch (err) {
-        console.error("解析实时消息失败", err);
-      }
-    };
-
-    es.onerror = (err) => {
-      console.error("SSE 连接错误", err);
-      es.close();
-    };
-
-    return () => {
-      es.close();
-      if (eventSourceRef.current === es) {
-        eventSourceRef.current = null;
-      }
-    };
   }, [selectedChatId]);
+
+  // 实时消息：优先 WebSocket，降级 SSE
+  const handleStreamMessage = useCallback((chatId: string, data: Message) => {
+    setMessages((prev) => {
+      const list = prev[chatId] ?? [];
+      if (list.some((m) => m.id === data.id)) return prev;
+      return {
+        ...prev,
+        [chatId]: [...list, data],
+      };
+    });
+  }, []);
+  useChatStream(selectedChatId, handleStreamMessage);
+
+  // 打开群设置时加载群成员
+  useEffect(() => {
+    if (!selectedChatId || !isGroupSettingsOpen) return;
+    const chat = chats.find((c) => c.id === selectedChatId);
+    if (!chat?.isGroup) return;
+    const loadMembers = async () => {
+      try {
+        const res = await fetch(`/api/chats/groups/${selectedChatId}/members`);
+        if (!res.ok) return;
+        const json = (await res.json()) as { data?: GroupMember[] };
+        if (Array.isArray(json.data)) {
+          setGroupMembersByChat((prev) => ({ ...prev, [selectedChatId]: json.data! }));
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    void loadMembers();
+  }, [selectedChatId, isGroupSettingsOpen, chats]);
 
   const selectedChat = selectedChatId
     ? chats.find((chat) => chat.id === selectedChatId) ?? null
@@ -267,6 +253,7 @@ export default function ChatPage() {
     fileUrl?: string;
     fileName?: string;
     fileSize?: string;
+    replyToMessageId?: string;
   }): Promise<Message | null> => {
     if (!selectedChatId) return null;
 
@@ -309,14 +296,18 @@ export default function ChatPage() {
   }, []);
 
   const handleSendMessage = useCallback(
-    async (content: string, attachments?: FileAttachment[]) => {
+    async (content: string, attachments?: FileAttachment[], replyToMessageId?: string) => {
       if (!selectedChatId) return;
 
       // 情况1: 纯文本消息（无附件）
       if (!attachments || attachments.length === 0) {
         if (!content.trim()) return;
 
-        const newMessage = await sendMessageToServer({ content, type: "TEXT" });
+        const newMessage = await sendMessageToServer({
+          content,
+          type: "TEXT",
+          replyToMessageId,
+        });
         if (newMessage) {
           addMessageLocally(selectedChatId, newMessage);
         }
@@ -324,7 +315,10 @@ export default function ChatPage() {
       }
 
       // 情况2: 有附件的消息，需要先上传文件再发送消息
+      let firstAttachment = true;
       for (const attachment of attachments) {
+        const replyIdForThis = firstAttachment ? replyToMessageId : undefined;
+        firstAttachment = false;
         // 生成临时 ID 用于乐观更新
         const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
         const messageType = getMessageType(attachment.type);
@@ -379,6 +373,7 @@ export default function ChatPage() {
             fileUrl: uploadResult.url,
             fileName: uploadResult.name,
             fileSize: uploadResult.size,
+            replyToMessageId: replyIdForThis,
           });
 
           if (serverMessage) {
@@ -481,19 +476,199 @@ export default function ChatPage() {
     setSelectedUserForProfile(null);
   }, []);
 
-  const handleKickFromGroup = useCallback((userId: string) => {
-    // Handle kick from group logic
-    setSelectedUserForProfile(null);
+  const loadGroupMembers = useCallback(async (chatId: string) => {
+    try {
+      const res = await fetch(`/api/chats/groups/${chatId}/members`);
+      if (!res.ok) return;
+      const json = (await res.json()) as { data?: GroupMember[] };
+      if (Array.isArray(json.data)) {
+        setGroupMembersByChat((prev) => ({ ...prev, [chatId]: json.data! }));
+      }
+    } catch (err) {
+      console.error(err);
+    }
   }, []);
+
+  const handleAddGroupMember = useCallback(() => {
+    setIsAddGroupMemberOpen(true);
+  }, []);
+
+  const handleRemoveGroupMember = useCallback(
+    async (memberId: string) => {
+      if (!selectedChatId) return;
+      try {
+        const res = await fetch(
+          `/api/chats/groups/${selectedChatId}/members/${memberId}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string };
+          alert(data?.error ?? "移除失败");
+          return;
+        }
+        await loadGroupMembers(selectedChatId);
+      } catch (err) {
+        console.error(err);
+        alert("移除失败");
+      }
+    },
+    [selectedChatId, loadGroupMembers]
+  );
+
+  const handleLeaveGroup = useCallback(async () => {
+    if (!selectedChatId) return;
+    if (!confirm("确定要退出该群聊吗？")) return;
+    try {
+      const res = await fetch(`/api/chats/groups/${selectedChatId}/leave`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string };
+        alert(data?.error ?? "退出失败");
+        return;
+      }
+      setChats((prev) => prev.filter((c) => c.id !== selectedChatId));
+      setSelectedChatId((prev) => (prev === selectedChatId ? null : prev));
+      setIsGroupSettingsOpen(false);
+      setMessages((prev) => {
+        const next = { ...prev };
+        delete next[selectedChatId];
+        return next;
+      });
+    } catch (err) {
+      console.error(err);
+      alert("退出失败");
+    }
+  }, [selectedChatId]);
+
+  const handleEditGroupName = useCallback(async () => {
+    if (!selectedChatId || !selectedChat) return;
+    const name = prompt("新群名称", selectedChat.name);
+    if (name === null || !name.trim()) return;
+    try {
+      const res = await fetch(`/api/chats/groups/${selectedChatId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as { error?: string };
+        alert(data?.error ?? "修改失败");
+        return;
+      }
+      setChats((prev) =>
+        prev.map((c) =>
+          c.id === selectedChatId ? { ...c, name: name.trim() } : c
+        )
+      );
+    } catch (err) {
+      console.error(err);
+      alert("修改失败");
+    }
+  }, [selectedChatId, selectedChat]);
+
+  const handleKickFromGroup = useCallback((userId: string) => {
+    handleRemoveGroupMember(userId);
+    setSelectedUserForProfile(null);
+  }, [handleRemoveGroupMember]);
 
   const handleMuteUser = useCallback((userId: string) => {
-    // Handle mute user logic
     setSelectedUserForProfile(null);
   }, []);
 
-  const currentGroupMembers: GroupMember[] = [];
-  const isCurrentUserAdmin = currentGroupMembers.some(
-    (m) => m.id === "u1" && m.role === "admin"
+  const currentGroupMembers: GroupMember[] = selectedChatId
+    ? groupMembersByChat[selectedChatId] ?? []
+    : [];
+  const isCurrentUserAdmin = currentUser?.id
+    ? currentGroupMembers.some(
+        (m) => m.id === currentUser.id && m.role === "admin"
+      )
+    : false;
+
+  const handleReplyMessage = useCallback((message: Message) => {
+    setReplyingTo({
+      id: message.id,
+      content: message.content,
+      senderName: message.senderName,
+    });
+  }, []);
+
+  const handleDeleteMessage = useCallback(
+    async (message: Message) => {
+      if (!selectedChatId) return;
+      if (!message.isOwn) return;
+      try {
+        const res = await fetch(
+          `/api/chats/${selectedChatId}/messages/${message.id}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string };
+          alert(data?.error ?? "撤回失败");
+          return;
+        }
+        setMessages((prev) => {
+          const list = prev[selectedChatId] ?? [];
+          return {
+            ...prev,
+            [selectedChatId]: list.map((m) =>
+              m.id === message.id
+                ? { ...m, content: "[已撤回]", type: "text", revoked: true }
+                : m
+            ),
+          };
+        });
+      } catch (err) {
+        console.error(err);
+        alert("撤回失败");
+      }
+    },
+    [selectedChatId]
+  );
+
+  const handleForwardMessage = useCallback(
+    async (message: Message) => {
+      const targetChat = chats.find((c) => c.id !== selectedChatId && !c.isGroup);
+      if (!targetChat) {
+        alert("暂无可转发的会话");
+        return;
+      }
+      try {
+        const payload: {
+          content: string;
+          type: "TEXT" | "IMAGE" | "VIDEO" | "FILE";
+          fileUrl?: string;
+          fileName?: string;
+          fileSize?: string;
+        } = {
+          content: message.content,
+          type: (message.type?.toUpperCase() as "TEXT" | "IMAGE" | "VIDEO" | "FILE") || "TEXT",
+        };
+        if (message.fileUrl) {
+          payload.fileUrl = message.fileUrl;
+          payload.fileName = message.fileName;
+          payload.fileSize = message.fileSize;
+        }
+        const res = await fetch(`/api/chats/${targetChat.id}/messages`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const data = (await res.json().catch(() => null)) as { error?: string };
+          alert(data?.error ?? "转发失败");
+          return;
+        }
+        const json = (await res.json()) as { data?: Message };
+        if (json.data) {
+          addMessageLocally(targetChat.id, json.data);
+        }
+      } catch (err) {
+        console.error(err);
+        alert("转发失败");
+      }
+    },
+    [chats, selectedChatId, addMessageLocally]
   );
 
   return (
@@ -508,7 +683,11 @@ export default function ChatPage() {
 
       {/* Sidebar */}
       <ChatSidebar
-        chats={chats}
+        chats={chats.map((c) => ({
+          ...c,
+          lastMessage: c.lastMessage ?? "",
+          timestamp: c.timestamp ?? "",
+        }))}
         contacts={contacts}
         selectedChatId={selectedChatId}
         onSelectChat={handleSelectChat}
@@ -527,6 +706,12 @@ export default function ChatPage() {
         onMobileMenuClick={toggleMobileSidebar}
         onSettingsClick={selectedChat?.isGroup ? toggleGroupSettings : undefined}
         onAvatarClick={handleAvatarClick}
+        replyingTo={replyingTo}
+        onCancelReply={() => setReplyingTo(null)}
+        onReplyMessage={handleReplyMessage}
+        onDeleteMessage={handleDeleteMessage}
+        onForwardMessage={handleForwardMessage}
+        onSearchClick={() => setIsSearchOpen(true)}
       />
 
       {/* Group Settings Panel */}
@@ -535,13 +720,27 @@ export default function ChatPage() {
           isOpen={isGroupSettingsOpen}
           onClose={() => setIsGroupSettingsOpen(false)}
           groupName={selectedChat.name}
-          groupAvatar={selectedChat.avatar}
+          groupAvatar={undefined}
           members={currentGroupMembers}
           isAdmin={isCurrentUserAdmin}
-          onAddMember={() => {}}
-          onRemoveMember={() => {}}
-          onLeaveGroup={() => {}}
-          onEditGroupName={() => {}}
+          onAddMember={handleAddGroupMember}
+          onRemoveMember={handleRemoveGroupMember}
+          onLeaveGroup={handleLeaveGroup}
+          onEditGroupName={handleEditGroupName}
+        />
+      )}
+
+      {/* Add Group Member Dialog */}
+      {isAddGroupMemberOpen && selectedChatId && (
+        <AddGroupMemberDialog
+          chatId={selectedChatId}
+          currentMembers={currentGroupMembers}
+          contacts={contacts}
+          onClose={() => setIsAddGroupMemberOpen(false)}
+          onAdded={() => {
+            loadGroupMembers(selectedChatId);
+            setIsAddGroupMemberOpen(false);
+          }}
         />
       )}
 
@@ -567,13 +766,29 @@ export default function ChatPage() {
         onAddFriend={handleAddFriend}
       />
 
+      {/* Search Chat Dialog */}
+      <SearchChatDialog
+        isOpen={isSearchOpen}
+        onClose={() => setIsSearchOpen(false)}
+        conversationId={selectedChatId}
+        onSelectResult={(convId) => {
+          setSelectedChatId(convId);
+          setIsSearchOpen(false);
+        }}
+      />
+
       {/* User Profile Popup */}
       {selectedUserForProfile && (
         <UserProfilePopup
           isOpen={!!selectedUserForProfile}
           onClose={() => setSelectedUserForProfile(null)}
-          user={selectedUserForProfile}
-          isFriend={selectedUserForProfile.isFriend}
+          user={{
+            id: selectedUserForProfile.id,
+            name: selectedUserForProfile.name,
+            title: selectedUserForProfile.title,
+            department: selectedUserForProfile.department,
+            isFriend: selectedUserForProfile.isFriend,
+          }}
           isGroupChat={selectedChat?.isGroup ?? false}
           onAddFriend={handleAddFriendFromProfile}
           onRemoveFriend={handleRemoveFriend}
