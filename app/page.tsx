@@ -10,6 +10,7 @@ import { AddFriendPanel } from "@/components/chat/add-friend-panel";
 import { UserProfilePopup } from "@/components/chat/user-profile-popup";
 import type { Message } from "@/components/chat/message-list";
 import type { Contact } from "@/components/chat/contacts-list";
+import type { FileAttachment } from "@/components/chat/message-input";
 
 type ChatSummary = {
   id: string;
@@ -217,45 +218,192 @@ export default function ChatPage() {
 
   const currentMessages = selectedChatId ? messages[selectedChatId] ?? [] : [];
 
+  /**
+   * 上传单个文件到服务器
+   */
+  const uploadFile = async (file: File): Promise<{ url: string; name: string; size: string } | null> => {
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!res.ok) {
+        console.error("文件上传失败");
+        return null;
+      }
+
+      const json = (await res.json()) as { url: string; name: string; size: string };
+      return json;
+    } catch (err) {
+      console.error("上传文件出错:", err);
+      return null;
+    }
+  };
+
+  /**
+   * 根据文件类型获取消息类型
+   */
+  const getMessageType = (attachmentType: FileAttachment["type"]): "IMAGE" | "VIDEO" | "FILE" => {
+    switch (attachmentType) {
+      case "image":
+        return "IMAGE";
+      case "video":
+        return "VIDEO";
+      default:
+        return "FILE";
+    }
+  };
+
+  /**
+   * 发送单条消息到服务器
+   */
+  const sendMessageToServer = async (payload: {
+    content?: string;
+    type?: "TEXT" | "IMAGE" | "VIDEO" | "FILE";
+    fileUrl?: string;
+    fileName?: string;
+    fileSize?: string;
+  }): Promise<Message | null> => {
+    if (!selectedChatId) return null;
+
+    try {
+      const res = await fetch(`/api/chats/${selectedChatId}/messages`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        console.error("发送消息失败");
+        return null;
+      }
+
+      const json = (await res.json()) as { data?: Message };
+      return json.data ?? null;
+    } catch (err) {
+      console.error("发送消息出错:", err);
+      return null;
+    }
+  };
+
+  /**
+   * 本地添加消息（乐观更新）
+   */
+  const addMessageLocally = useCallback((chatId: string, message: Message) => {
+    setMessages((prev) => {
+      const list = prev[chatId] ?? [];
+      if (list.some((m) => m.id === message.id)) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [chatId]: [...list, message],
+      };
+    });
+  }, []);
+
   const handleSendMessage = useCallback(
-    async (content: string) => {
+    async (content: string, attachments?: FileAttachment[]) => {
       if (!selectedChatId) return;
 
-      try {
-        const res = await fetch(`/api/chats/${selectedChatId}/messages`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ content }),
-        });
+      // 情况1: 纯文本消息（无附件）
+      if (!attachments || attachments.length === 0) {
+        if (!content.trim()) return;
 
-        if (!res.ok) {
-          console.error("发送消息失败");
-          return;
+        const newMessage = await sendMessageToServer({ content, type: "TEXT" });
+        if (newMessage) {
+          addMessageLocally(selectedChatId, newMessage);
+        }
+        return;
+      }
+
+      // 情况2: 有附件的消息，需要先上传文件再发送消息
+      for (const attachment of attachments) {
+        // 生成临时 ID 用于乐观更新
+        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const messageType = getMessageType(attachment.type);
+
+        // 构造临时消息用于乐观更新（立即显示）
+        const tempMessage: Message = {
+          id: tempId,
+          content: content || "",
+          timestamp: new Date().toISOString(),
+          senderId: "current",
+          senderName: currentUser?.name ?? "我",
+          isOwn: true,
+          status: "sending",
+          type: attachment.type,
+          // 根据类型设置对应的 URL 字段
+          ...(attachment.type === "image" && { imageUrl: attachment.url }),
+          ...(attachment.type === "video" && { videoUrl: attachment.url }),
+          ...(attachment.type === "file" && { 
+            fileName: attachment.name, 
+            fileSize: attachment.size 
+          }),
+          fileUrl: attachment.url,
+          fileName: attachment.name,
+          fileSize: attachment.size,
+        };
+
+        // 乐观更新：立即显示消息
+        addMessageLocally(selectedChatId, tempMessage);
+
+        // 上传文件
+        if (attachment.file) {
+          const uploadResult = await uploadFile(attachment.file);
+          
+          if (!uploadResult) {
+            // 上传失败，更新消息状态
+            setMessages((prev) => {
+              const list = prev[selectedChatId] ?? [];
+              return {
+                ...prev,
+                [selectedChatId]: list.map((m) =>
+                  m.id === tempId ? { ...m, status: "failed" as const } : m
+                ),
+              };
+            });
+            continue;
+          }
+
+          // 发送消息到服务器
+          const serverMessage = await sendMessageToServer({
+            content: content || "",
+            type: messageType,
+            fileUrl: uploadResult.url,
+            fileName: uploadResult.name,
+            fileSize: uploadResult.size,
+          });
+
+          if (serverMessage) {
+            // 用服务器返回的消息替换临时消息
+            setMessages((prev) => {
+              const list = prev[selectedChatId] ?? [];
+              // 移除临时消息（服务器消息会通过 SSE 或这里添加）
+              const filtered = list.filter((m) => m.id !== tempId);
+              // 检查是否已经存在（SSE 可能已经推送）
+              if (filtered.some((m) => m.id === serverMessage.id)) {
+                return { ...prev, [selectedChatId]: filtered };
+              }
+              return {
+                ...prev,
+                [selectedChatId]: [...filtered, serverMessage],
+              };
+            });
+          }
         }
 
-        const json = (await res.json()) as { data?: Message };
-        if (!json.data) return;
-
-        const newMessage = json.data;
-
-        // 本地立即插入一条，提升体验；SSE 到来时会通过 id 去重
-        setMessages((prev) => {
-          const list = prev[selectedChatId] ?? [];
-          if (list.some((m) => m.id === newMessage.id)) {
-            return prev;
-          }
-          return {
-            ...prev,
-            [selectedChatId]: [...list, newMessage],
-          };
-        });
-      } catch (err) {
-        console.error(err);
+        // 只有第一个附件携带文本内容
+        content = "";
       }
     },
-    [selectedChatId]
+    [selectedChatId, currentUser, addMessageLocally]
   );
 
   const handleSelectChat = useCallback((id: string) => {

@@ -19,10 +19,11 @@ export interface Message {
   senderName: string;
   senderAvatar?: string;
   isOwn: boolean;
-  status?: "sent" | "delivered" | "read";
+  status?: "sending" | "sent" | "delivered" | "read" | "failed";
   type?: MessageType;
   fileName?: string;
   fileSize?: string;
+  fileUrl?: string;
   imageUrl?: string;
   videoUrl?: string;
 }

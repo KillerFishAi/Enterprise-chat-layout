@@ -58,7 +58,11 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       String
 
-  content String
+  content  String
+  type     MessageType @default(TEXT)
+  fileUrl  String?
+  fileName String?
+  fileSize String?
 
   createdAt DateTime @default(now())
 }
@@ -97,4 +101,11 @@ enum FriendRequestStatus {
   PENDING
   ACCEPTED
   REJECTED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  VIDEO
+  FILE
 }
