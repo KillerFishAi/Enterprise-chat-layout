@@ -1,13 +1,14 @@
 "use client";
 
-import { useState } from "react";
-import { X, Search, Smartphone, Mail, User, UserPlus, Check, Loader2 } from "lucide-react";
+import { useState, useEffect } from "react";
+import { X, Search, Smartphone, Mail, User, UserPlus, Check, Loader2, UserCheck, UserX, Bell } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 
 type SearchMethod = "account" | "phone" | "email";
+type PanelTab = "search" | "requests";
 
 interface SearchResult {
   id: string;
@@ -23,6 +24,15 @@ interface SearchResult {
   hasRequestFromTarget?: boolean;
 }
 
+interface FriendRequest {
+  id: string;
+  fromUserId: string;
+  fromName: string;
+  fromDepartment?: string;
+  fromTitle?: string;
+  createdAt: string;
+}
+
 interface AddFriendPanelProps {
   isOpen: boolean;
   onClose: () => void;
@@ -30,6 +40,7 @@ interface AddFriendPanelProps {
 }
 
 export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelProps) {
+  const [activeTab, setActiveTab] = useState<PanelTab>("search");
   const [searchMethod, setSearchMethod] = useState<SearchMethod>("account");
   const [searchQuery, setSearchQuery] = useState("");
   const [isSearching, setIsSearching] = useState(false);
@@ -37,6 +48,88 @@ export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelP
   const [hasSearched, setHasSearched] = useState(false);
   const [addingIds, setAddingIds] = useState<Set<string>>(new Set());
   const [addedIds, setAddedIds] = useState<Set<string>>(new Set());
+  
+  // 好友请求相关状态
+  const [friendRequests, setFriendRequests] = useState<FriendRequest[]>([]);
+  const [isLoadingRequests, setIsLoadingRequests] = useState(false);
+  const [processingIds, setProcessingIds] = useState<Set<string>>(new Set());
+
+  // 加载好友请求列表
+  const loadFriendRequests = async () => {
+    setIsLoadingRequests(true);
+    try {
+      const res = await fetch("/api/friends/requests");
+      if (!res.ok) throw new Error("获取好友请求失败");
+      const json = (await res.json()) as { data?: { incoming?: FriendRequest[] } };
+      setFriendRequests(json.data?.incoming ?? []);
+    } catch (err) {
+      console.error(err);
+      setFriendRequests([]);
+    } finally {
+      setIsLoadingRequests(false);
+    }
+  };
+
+  // 切换到请求标签页时加载请求列表
+  useEffect(() => {
+    if (isOpen && activeTab === "requests") {
+      loadFriendRequests();
+    }
+  }, [isOpen, activeTab]);
+
+  // 打开面板时也加载一次（用于显示请求数量）
+  useEffect(() => {
+    if (isOpen) {
+      loadFriendRequests();
+    }
+  }, [isOpen]);
+
+  // 接受好友请求
+  const handleAcceptRequest = async (requestId: string) => {
+    setProcessingIds((prev) => new Set(prev).add(requestId));
+    try {
+      const res = await fetch(`/api/friends/requests/${requestId}/accept`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("接受请求失败");
+      // 移除已处理的请求
+      setFriendRequests((prev) => prev.filter((r) => r.id !== requestId));
+      // 触发好友列表刷新
+      const request = friendRequests.find((r) => r.id === requestId);
+      if (request) {
+        onAddFriend(request.fromUserId);
+      }
+    } catch (err) {
+      alert((err as Error).message ?? "操作失败，请稍后重试");
+    } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  };
+
+  // 拒绝好友请求
+  const handleRejectRequest = async (requestId: string) => {
+    setProcessingIds((prev) => new Set(prev).add(requestId));
+    try {
+      const res = await fetch(`/api/friends/requests/${requestId}/reject`, {
+        method: "POST",
+      });
+      if (!res.ok) throw new Error("拒绝请求失败");
+      // 移除已处理的请求
+      setFriendRequests((prev) => prev.filter((r) => r.id !== requestId));
+    } catch (err) {
+      alert((err as Error).message ?? "操作失败，请稍后重试");
+    } finally {
+      setProcessingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(requestId);
+        return next;
+      });
+    }
+  };
 
   const handleSearch = async () => {
     if (!searchQuery.trim()) return;
@@ -91,7 +184,20 @@ export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelP
     setHasSearched(false);
     setAddingIds(new Set());
     setAddedIds(new Set());
+    setActiveTab("search");
     onClose();
+  };
+
+  // 格式化时间
+  const formatTime = (dateStr: string) => {
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    if (days === 0) return "今天";
+    if (days === 1) return "昨天";
+    if (days < 7) return `${days}天前`;
+    return date.toLocaleDateString();
   };
 
   const getPlaceholder = () => {
@@ -127,6 +233,54 @@ export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelP
           </button>
         </div>
 
+        {/* Main Tabs: Search / Requests */}
+        <div className="flex border-b border-border">
+          <button
+            type="button"
+            onClick={() => setActiveTab("search")}
+            className={cn(
+              "flex-1 py-3 text-sm font-medium transition-colors relative",
+              activeTab === "search"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <Search className="h-4 w-4" />
+              搜索用户
+            </span>
+            {activeTab === "search" && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("requests")}
+            className={cn(
+              "flex-1 py-3 text-sm font-medium transition-colors relative",
+              activeTab === "requests"
+                ? "text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            <span className="flex items-center justify-center gap-1.5">
+              <Bell className="h-4 w-4" />
+              好友请求
+              {friendRequests.length > 0 && (
+                <span className="ml-1 px-1.5 py-0.5 text-xs bg-red-500 text-white rounded-full">
+                  {friendRequests.length}
+                </span>
+              )}
+            </span>
+            {activeTab === "requests" && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
+            )}
+          </button>
+        </div>
+
+        {/* Search Tab Content */}
+        {activeTab === "search" && (
+          <>
         {/* Search Method Tabs */}
         <div className="px-4 pt-4">
           <div className="flex gap-1 p-1 bg-muted rounded-lg">
@@ -310,6 +464,87 @@ export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelP
             添加好友后，对方需要同意才能成为好友
           </p>
         </div>
+          </>
+        )}
+
+        {/* Requests Tab Content */}
+        {activeTab === "requests" && (
+          <div className="flex-1 overflow-y-auto px-4 py-4">
+            {isLoadingRequests ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Loader2 className="h-8 w-8 animate-spin mb-3" />
+                <p className="text-sm">加载中...</p>
+              </div>
+            ) : friendRequests.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+                <Bell className="h-12 w-12 mb-3 opacity-50" />
+                <p className="text-sm">暂无好友请求</p>
+                <p className="text-xs mt-1">当有人向你发送好友请求时，会显示在这里</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <p className="text-xs text-muted-foreground mb-3">
+                  {friendRequests.length} 条待处理请求
+                </p>
+                {friendRequests.map((request) => {
+                  const isProcessing = processingIds.has(request.id);
+                  return (
+                    <div
+                      key={request.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors"
+                    >
+                      <Avatar className="h-12 w-12">
+                        <AvatarFallback className="bg-primary/10 text-primary text-sm font-medium">
+                          {request.fromName.slice(0, 2)}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-medium text-foreground text-sm">
+                          {request.fromName}
+                        </p>
+                        {request.fromDepartment && (
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            {request.fromDepartment} · {request.fromTitle}
+                          </p>
+                        )}
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {formatTime(request.createdAt)}
+                        </p>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button
+                          size="sm"
+                          variant="default"
+                          disabled={isProcessing}
+                          onClick={() => handleAcceptRequest(request.id)}
+                          className="bg-primary hover:bg-primary/90"
+                        >
+                          {isProcessing ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <>
+                              <UserCheck className="h-4 w-4 mr-1" />
+                              接受
+                            </>
+                          )}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          disabled={isProcessing}
+                          onClick={() => handleRejectRequest(request.id)}
+                        >
+                          <UserX className="h-4 w-4 mr-1" />
+                          拒绝
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </>
   );
