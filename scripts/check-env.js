@@ -2,7 +2,39 @@
  * 检查环境变量是否已配置（不输出变量值，只显示是否已设置）
  * 用法: node scripts/check-env.js  或  npm run env:check
  * 可选: npm run env:check:ws 或 node scripts/check-env.js --ws 表示同时检查 WebSocket 所需变量
+ * 会主动加载项目根目录的 .env 文件，与 Next.js 行为一致
  */
+const path = require("path");
+const fs = require("fs");
+
+// 加载项目根目录的 .env，使 npm run env:check 能读到 .env 里的变量
+function loadEnv() {
+  const root = path.resolve(__dirname, "..");
+  const envPath = path.join(root, ".env");
+  try {
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, "utf8");
+      for (const line of content.split("\n")) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith("#")) {
+          const eq = trimmed.indexOf("=");
+          if (eq > 0) {
+            const key = trimmed.slice(0, eq).trim();
+            let val = trimmed.slice(eq + 1).trim();
+            if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+              val = val.slice(1, -1);
+            }
+            if (!process.env[key]) process.env[key] = val;
+          }
+        }
+      }
+    }
+  } catch (e) {
+    // 忽略 .env 读取错误
+  }
+}
+loadEnv();
+
 const CHECK_WS = process.env.CHECK_WS === "1" || process.argv.includes("--ws");
 
 const NEXT_APP_VARS = [
