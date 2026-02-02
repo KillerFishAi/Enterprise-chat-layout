@@ -10,6 +10,12 @@ const WS_URL =
     : "";
 const SOCKET_CONNECT_TIMEOUT = 2000;
 
+function getAuthToken(): string | null {
+  if (typeof document === "undefined") return null;
+  const m = document.cookie.match(/token=([^;]+)/);
+  return m ? m[1].trim() : null;
+}
+
 export function useChatStream(
   chatId: string | null,
   onMessage: (chatId: string, message: Message) => void
@@ -51,6 +57,7 @@ export function useChatStream(
         transports: ["websocket", "polling"],
         withCredentials: true,
         timeout: SOCKET_CONNECT_TIMEOUT,
+        auth: { token: getAuthToken() ?? "" },
       });
       socketRef.current = socket;
 

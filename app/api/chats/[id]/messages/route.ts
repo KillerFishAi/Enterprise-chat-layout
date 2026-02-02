@@ -223,8 +223,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   // 使用统一的字段映射函数
   const message = mapMessageFields(created, payload.userId, true);
 
-  // 推送给订阅该会话的所有客户端
-  publishChatMessage(id, message);
+  // 推送给订阅该会话的所有客户端（含重试与本地降级）
+  await publishChatMessage(id, message);
 
   return NextResponse.json(
     { data: message },

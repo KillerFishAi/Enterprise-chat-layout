@@ -3,6 +3,41 @@ import { writeFile, mkdir, access } from "fs/promises";
 import path from "path";
 import { getAuthTokenFromRequest, verifyAuthToken } from "@/lib/auth";
 
+/** 允许的 MIME 类型 */
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/gif",
+  "image/webp",
+  "video/mp4",
+  "video/webm",
+  "application/pdf",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "text/plain",
+  "text/csv",
+]);
+
+/** 允许的文件扩展名 */
+const ALLOWED_EXTENSIONS = new Set([
+  ".jpg",
+  ".jpeg",
+  ".png",
+  ".gif",
+  ".webp",
+  ".mp4",
+  ".webm",
+  ".pdf",
+  ".doc",
+  ".docx",
+  ".xls",
+  ".xlsx",
+  ".txt",
+  ".csv",
+]);
+
 /**
  * 格式化文件大小
  * @param bytes 文件字节数
@@ -79,7 +114,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 3. 文件类型和大小验证（可选，根据需要调整）
+    // 3. 文件大小限制
     const maxSize = 50 * 1024 * 1024; // 50MB
     if (file.size > maxSize) {
       return NextResponse.json(
@@ -88,11 +123,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // 4. 确保上传目录存在
+    // 4. MIME 类型与扩展名校验
+    if (!ALLOWED_MIME_TYPES.has(file.type)) {
+      return NextResponse.json(
+        { error: "不支持的文件类型" },
+        { status: 400 }
+      );
+    }
+    const ext = path.extname(file.name).toLowerCase();
+    if (!ALLOWED_EXTENSIONS.has(ext)) {
+      return NextResponse.json(
+        { error: "不支持的文件扩展名" },
+        { status: 400 }
+      );
+    }
+
+    // 5. 确保上传目录存在
     const uploadDir = path.join(process.cwd(), "public", "uploads");
     await ensureUploadDir(uploadDir);
 
-    // 5. 生成唯一文件名并保存文件
+    // 6. 生成唯一文件名并保存文件
     const uniqueFileName = generateUniqueFileName(file.name);
     const filePath = path.join(uploadDir, uniqueFileName);
 
@@ -101,7 +151,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(bytes);
     await writeFile(filePath, buffer);
 
-    // 6. 返回结果
+    // 7. 返回结果
     return NextResponse.json({
       url: `/uploads/${uniqueFileName}`,
       name: file.name,

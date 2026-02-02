@@ -40,6 +40,8 @@ declare global {
 }
 
 const CHAT_CHANNEL = "chat:messages";
+const MAX_PUBLISH_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
 
 /** In-process emitter: always used for dispatching to local subscribers */
 const emitter: ChatEventEmitter =
@@ -97,14 +99,37 @@ function ensureRedisSub(): void {
   }
 }
 
-export function publishChatMessage(chatId: string, payload: ChatMessagePayload) {
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * 发布聊天消息到 Redis，失败时重试并降级到本地广播。
+ * @returns 是否通过 Redis 成功发布（false 表示降级到本地）
+ */
+export async function publishChatMessage(
+  chatId: string,
+  payload: ChatMessagePayload,
+  retries = MAX_PUBLISH_RETRIES
+): Promise<boolean> {
   const client = getRedisPub();
-  if (client) {
-    client
-      .publish(CHAT_CHANNEL, JSON.stringify({ chatId, payload }))
-      .catch((err) => console.error("[chat-events] Redis publish error:", err));
-  } else {
+
+  if (!client) {
     emitter.emit("message", chatId, payload);
+    return false;
+  }
+
+  try {
+    await client.publish(CHAT_CHANNEL, JSON.stringify({ chatId, payload }));
+    return true;
+  } catch (err) {
+    console.error("[chat-events] Redis publish error:", err);
+    if (retries > 0) {
+      await delay(RETRY_DELAY_MS);
+      return publishChatMessage(chatId, payload, retries - 1);
+    }
+    emitter.emit("message", chatId, payload);
+    return false;
   }
 }
 

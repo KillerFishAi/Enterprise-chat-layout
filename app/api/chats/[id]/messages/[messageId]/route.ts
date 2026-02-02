@@ -62,7 +62,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
     type: "text" as const,
     revoked: true,
   };
-  publishChatMessage(conversationId, revoked as Parameters<typeof publishChatMessage>[1]);
+  await publishChatMessage(conversationId, revoked as Parameters<typeof publishChatMessage>[1]);
 
   return NextResponse.json({ data: { revoked: true } });
 }
