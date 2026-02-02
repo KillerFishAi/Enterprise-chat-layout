@@ -16,8 +16,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# env files
+# env files (保留 .env.example 供部署参考)
 .env*
+!.env.example
 
 # IDE / editor
 .cursor

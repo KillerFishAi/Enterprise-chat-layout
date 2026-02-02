@@ -8,7 +8,9 @@
     "lint": "eslint .",
     "start": "next start",
     "start:ws": "node server/ws-server.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "env:check": "node scripts/check-env.js",
+    "env:check:ws": "node scripts/check-env.js --ws"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",
