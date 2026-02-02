@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Search, X, MessageSquare, Users, Settings, UserPlus } from "lucide-react";
+import { Search, X, MessageSquare, Users, Settings, UserPlus, UsersRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ContactsList, type Contact } from "./contacts-list";
 
@@ -30,6 +30,8 @@ interface ChatSidebarProps {
   isMobileOpen?: boolean;
   onSettingsClick?: () => void;
   onAddFriendClick?: () => void;
+  /** 创建群聊入口 */
+  onCreateGroupClick?: () => void;
 }
 
 export function ChatSidebar({
@@ -42,6 +44,7 @@ export function ChatSidebar({
   isMobileOpen,
   onSettingsClick,
   onAddFriendClick,
+  onCreateGroupClick,
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<TabType>("chats");
   const [searchQuery, setSearchQuery] = useState("");
@@ -103,6 +106,18 @@ export function ChatSidebar({
             <span className="absolute bottom-0 left-4 right-4 h-0.5 bg-primary" />
           )}
         </button>
+        {/* Create Group button */}
+        {onCreateGroupClick && (
+          <button
+            type="button"
+            onClick={onCreateGroupClick}
+            className="flex items-center justify-center w-10 py-3 text-muted-foreground hover:text-primary transition-colors"
+            title="创建群聊"
+          >
+            <UsersRound className="h-4 w-4" />
+            <span className="sr-only">创建群聊</span>
+          </button>
+        )}
         {/* Add Friend button */}
         <button
           type="button"

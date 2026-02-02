@@ -7,6 +7,7 @@ import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatArea } from "@/components/chat/chat-area";
 import { GroupSettings, type GroupMember } from "@/components/chat/group-settings";
 import { AddGroupMemberDialog } from "@/components/chat/add-group-member-dialog";
+import { CreateGroupDialog } from "@/components/chat/create-group-dialog";
 import { SearchChatDialog } from "@/components/chat/search-chat-dialog";
 import { SettingsPanel } from "@/components/chat/settings-panel";
 import { AddFriendPanel } from "@/components/chat/add-friend-panel";
@@ -55,6 +56,7 @@ export default function ChatPage() {
   } | null>(null);
   const [groupMembersByChat, setGroupMembersByChat] = useState<Record<string, GroupMember[]>>({});
   const [isAddGroupMemberOpen, setIsAddGroupMemberOpen] = useState(false);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; senderName: string } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
 
@@ -124,6 +126,23 @@ export default function ChatPage() {
 
     void loadBaseData();
   }, [router]);
+
+  /** 仅刷新会话列表，可选打开指定会话（如接受好友后的新私聊） */
+  const loadChats = useCallback(async (conversationIdToSelect?: string) => {
+    try {
+      const chatsRes = await fetch("/api/chats");
+      if (!chatsRes.ok) return;
+      const chatsJson = (await chatsRes.json()) as { data?: ChatSummary[] };
+      if (Array.isArray(chatsJson.data)) {
+        setChats(chatsJson.data);
+        if (conversationIdToSelect && chatsJson.data.some((c) => c.id === conversationIdToSelect)) {
+          setSelectedChatId(conversationIdToSelect);
+        }
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  }, []);
 
   // 在线状态心跳：每 30 秒上报一次
   useEffect(() => {
@@ -437,9 +456,22 @@ export default function ChatPage() {
     setIsAddFriendOpen((prev) => !prev);
   }, []);
 
-  const handleAddFriend = useCallback((userId: string) => {
-    // Handle add friend logic
-  }, []);
+  const handleAddFriend = useCallback(
+    async (userId: string, conversationId?: string) => {
+      setFriendsList((prev) => (prev.includes(userId) ? prev : [...prev, userId]));
+      await loadChats(conversationId);
+      setIsAddFriendOpen(false);
+    },
+    [loadChats]
+  );
+
+  const handleCreateGroupSuccess = useCallback(
+    async (groupId: string) => {
+      await loadChats(groupId);
+      setIsCreateGroupOpen(false);
+    },
+    [loadChats]
+  );
 
   const handleLogout = useCallback(async () => {
     // 清理 token：通过设置过期 cookie
@@ -696,6 +728,7 @@ export default function ChatPage() {
         onMobileClose={() => setIsMobileSidebarOpen(false)}
         onSettingsClick={toggleAppSettings}
         onAddFriendClick={toggleAddFriend}
+        onCreateGroupClick={() => setIsCreateGroupOpen(true)}
       />
 
       {/* Chat Area */}
@@ -727,6 +760,15 @@ export default function ChatPage() {
           onRemoveMember={handleRemoveGroupMember}
           onLeaveGroup={handleLeaveGroup}
           onEditGroupName={handleEditGroupName}
+        />
+      )}
+
+      {/* Create Group Dialog */}
+      {isCreateGroupOpen && (
+        <CreateGroupDialog
+          contacts={contacts}
+          onClose={() => setIsCreateGroupOpen(false)}
+          onCreated={handleCreateGroupSuccess}
         />
       )}
 

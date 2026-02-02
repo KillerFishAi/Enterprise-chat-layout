@@ -30,6 +30,8 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     return NextResponse.json({ error: "请求已处理" }, { status: 400 });
   }
 
+  let newConversationId: string | undefined;
+
   try {
     await prisma.$transaction(async (tx) => {
       await tx.friendRequest.update({
@@ -83,10 +85,13 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
             { conversationId: conversation.id, userId: request.toUserId, role: "MEMBER" },
           ],
         });
+        newConversationId = conversation.id;
       }
     });
 
-    return NextResponse.json({ data: { id: request.id } });
+    return NextResponse.json({
+      data: { id: request.id, conversationId: newConversationId ?? undefined },
+    });
   } catch (error) {
     console.error(error);
     return NextResponse.json({ error: "处理好友请求失败" }, { status: 500 });

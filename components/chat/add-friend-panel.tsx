@@ -36,7 +36,8 @@ interface FriendRequest {
 interface AddFriendPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onAddFriend: (userId: string) => void;
+  /** 接受好友后回调，conversationId 为新创建的私聊会话 id，用于前端刷新列表并打开聊天 */
+  onAddFriend: (userId: string, conversationId?: string) => void;
 }
 
 export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelProps) {
@@ -92,12 +93,13 @@ export function AddFriendPanel({ isOpen, onClose, onAddFriend }: AddFriendPanelP
         method: "POST",
       });
       if (!res.ok) throw new Error("接受请求失败");
+      const json = (await res.json()) as { data?: { id?: string; conversationId?: string } };
+      const conversationId = json.data?.conversationId;
       // 移除已处理的请求
       setFriendRequests((prev) => prev.filter((r) => r.id !== requestId));
-      // 触发好友列表刷新
       const request = friendRequests.find((r) => r.id === requestId);
       if (request) {
-        onAddFriend(request.fromUserId);
+        onAddFriend(request.fromUserId, conversationId);
       }
     } catch (err) {
       alert((err as Error).message ?? "操作失败，请稍后重试");
