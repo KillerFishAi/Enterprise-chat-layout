@@ -53,6 +53,7 @@ export async function DELETE(req: NextRequest, { params }: RouteParams) {
 
   const revoked = {
     id: message.id,
+    seqId: message.seqId,
     content: "[已撤回]",
     timestamp: message.createdAt.toISOString(),
     senderId: message.senderId,

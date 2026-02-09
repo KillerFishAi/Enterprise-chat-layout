@@ -24,9 +24,23 @@ model User {
   friendships        Friendship[]    @relation("UserToFriends")
   friendsOf         Friendship[]    @relation("FriendToUsers")
   messageReads       MessageRead[]
+  deviceTokens       DeviceToken[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model DeviceToken {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId    String
+  token     String   // FCM 或 APNs device token
+  platform  String   // "fcm" | "apns"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, token])
+  @@index([userId])
 }
 
 model Conversation {
@@ -60,8 +74,12 @@ model Message {
   sender         User         @relation(fields: [senderId], references: [id])
   senderId       String
 
-  content  String
-  type     MessageType @default(TEXT)
+  seqId       Int          @default(0)    // 会话内单调递增消息序号
+  clientMsgId String?      @unique        // 客户端消息ID（幂等去重）
+
+  content   String       // 文本内容或描述（兼容现有逻辑）
+  contentJson Json?      // 预留：多媒体/扩展结构，如 { type, url, meta }
+  type     MessageType @default(TEXT)    // TEXT | IMAGE | VIDEO | FILE
   fileUrl  String?
   fileName String?
   fileSize String?
@@ -72,6 +90,9 @@ model Message {
   reads    MessageRead[]
 
   createdAt DateTime @default(now())
+
+  @@unique([conversationId, seqId])
+  @@index([conversationId, seqId])
 }
 
 model MessageRead {

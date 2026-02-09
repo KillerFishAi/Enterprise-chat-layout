@@ -141,8 +141,8 @@ export function MessageInput({ onSendMessage, disabled, replyingTo, onCancelRepl
       {/* Replying to */}
       {replyingTo && (
         <div className="px-4 py-2 flex items-center gap-2 border-t border-border bg-muted/50">
-          <span className="text-xs text-muted-foreground shrink-0">回复 {replyingTo.senderName}:</span>
-          <span className="text-xs text-foreground truncate flex-1">{replyingTo.content.slice(0, 50)}{replyingTo.content.length > 50 ? "…" : ""}</span>
+          <span className="text-xs text-muted-foreground shrink-0">回复 {replyingTo.senderName ?? "未知"}:</span>
+          <span className="text-xs text-foreground truncate flex-1">{(replyingTo.content ?? "").slice(0, 50)}{(replyingTo.content ?? "").length > 50 ? "…" : ""}</span>
           {onCancelReply && (
             <button type="button" onClick={onCancelReply} className="p-1 rounded hover:bg-muted text-muted-foreground">
               <X className="h-4 w-4" />

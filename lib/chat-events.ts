@@ -3,6 +3,8 @@ import Redis from "ioredis";
 
 export type ChatMessagePayload = {
   id: string;
+  seqId: number;              // 会话内单调递增消息序号
+  clientMsgId?: string;       // 客户端生成的幂等 ID
   content: string;
   timestamp: string;
   senderId: string;

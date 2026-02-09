@@ -1,7 +1,14 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyAuthToken } from "@/lib/auth";
 
-const PUBLIC_PATHS = ["/login", "/register", "/api/auth/login", "/api/auth/register"];
+const PUBLIC_PATHS = [
+  "/login",
+  "/register",
+  "/api/auth/login",
+  "/api/auth/register",
+  "/api/health",
+  "/api/internal", // 内部接口由各 route 自行校验 X-Internal-Secret
+];
 
 export function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;

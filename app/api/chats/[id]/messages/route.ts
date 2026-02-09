@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuthTokenFromRequest, verifyAuthToken } from "@/lib/auth";
 import { publishChatMessage } from "@/lib/chat-events";
+import { getNextSeqId, initConversationSeq } from "@/lib/redis";
+import { pushToMessageBuffer } from "@/lib/message-buffer";
 import { MessageType } from "@prisma/client";
 
 type RouteParams = {
@@ -15,6 +17,8 @@ type RouteParams = {
 function mapMessageFields(
   message: {
     id: string;
+    seqId: number;
+    clientMsgId?: string | null;
     content: string;
     type: MessageType;
     fileUrl: string | null;
@@ -44,6 +48,8 @@ function mapMessageFields(
       : "read";
   const base = {
     id: message.id,
+    seqId: message.seqId,
+    clientMsgId: message.clientMsgId ?? undefined,
     content: message.content,
     timestamp: message.createdAt.toISOString(),
     senderId: message.senderId,
@@ -109,8 +115,14 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
         select: { id: true, content: true, type: true, sender: { select: { nickname: true } } },
       },
     },
-    orderBy: { createdAt: "asc" },
+    orderBy: { seqId: "asc" },  // 按 seqId 排序，保证时序一致性
   });
+
+  // 初始化 Redis 序号计数器（首次加载时同步 DB 最大值）
+  if (messages.length > 0) {
+    const maxSeq = Math.max(...messages.map((m) => m.seqId));
+    await initConversationSeq(id, maxSeq);
+  }
 
   return NextResponse.json({
     data: messages.map((m) => mapMessageFields(m, payload.userId)),
@@ -125,6 +137,7 @@ type MessageRequestBody = {
   fileName?: string;
   fileSize?: string;
   replyToMessageId?: string;
+  clientMsgId?: string;    // 客户端幂等 ID，防止重复提交
 };
 
 // 有效的消息类型
@@ -178,7 +191,7 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
 
   const isMember = await prisma.conversationMember.findFirst({
     where: { conversationId: id, userId: payload.userId },
-    include: { conversation: true },
+    include: { conversation: true, user: { select: { nickname: true } } },
   });
 
   if (!isMember) {
@@ -186,6 +199,25 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
   }
   if (isMember.conversation.isGroup && isMember.mutedUntil && isMember.mutedUntil > new Date()) {
     return NextResponse.json({ error: "您已被禁言，暂时无法发送消息" }, { status: 403 });
+  }
+
+  // ── 幂等去重：如果客户端提供了 clientMsgId，先检查是否已存在 ──
+  const clientMsgId = body.clientMsgId?.trim() || null;
+  if (clientMsgId) {
+    const existing = await prisma.message.findUnique({
+      where: { clientMsgId },
+      include: {
+        sender: true,
+        replyTo: {
+          select: { id: true, content: true, type: true, sender: { select: { nickname: true } } },
+        },
+      },
+    });
+    if (existing) {
+      // 消息已存在，直接返回（幂等）
+      const message = mapMessageFields(existing, payload.userId, false);
+      return NextResponse.json({ data: message }, { status: 200 });
+    }
   }
 
   const replyToMessageId =
@@ -201,34 +233,45 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     }
   }
 
-  const created = await prisma.message.create({
-    data: {
-      conversationId: id,
-      senderId: payload.userId,
-      content: body.content?.trim() || "",
-      type: type,
-      fileUrl: body.fileUrl || null,
-      fileName: body.fileName || null,
-      fileSize: body.fileSize || null,
-      replyToMessageId: replyToMessageId || undefined,
-    },
-    include: {
-      sender: true,
-      replyTo: {
-        select: { id: true, content: true, type: true, sender: { select: { nickname: true } } },
-      },
-    },
+  // ── 原子分配 seqId ──
+  const seqId = await getNextSeqId(id);
+
+  // ── 批量写入：入 Buffer，由 message-buffer 在 500ms 或 50 条时 createMany + 发布 ──
+  pushToMessageBuffer({
+    conversationId: id,
+    senderId: payload.userId,
+    seqId,
+    clientMsgId: clientMsgId || null,
+    content: body.content?.trim() || "",
+    type: type,
+    fileUrl: body.fileUrl || null,
+    fileName: body.fileName || null,
+    fileSize: body.fileSize || null,
+    replyToMessageId: replyToMessageId || null,
   });
 
-  // 使用统一的字段映射函数
-  const message = mapMessageFields(created, payload.userId, true);
-
-  // 推送给订阅该会话的所有客户端（含重试与本地降级）
-  await publishChatMessage(id, message);
+  // 返回 202 + 暂存消息（无真实 id，客户端用 clientMsgId 做乐观展示；真实消息经 WS 推送后替换）
+  const senderName = isMember.conversation?.name ?? ""; // 当前上下文中无 conversation name，用占位
+  const stagedMessage = {
+    id: clientMsgId || `staged-${seqId}`,
+    seqId,
+    clientMsgId: clientMsgId ?? undefined,
+    content: body.content?.trim() || "",
+    timestamp: new Date().toISOString(),
+    senderId: payload.userId,
+    senderName: isMember.user?.nickname ?? "我",
+    isOwn: true,
+    status: "sent" as const,
+    type: type.toLowerCase() as "text" | "image" | "video" | "file",
+    fileUrl: body.fileUrl ?? null,
+    fileName: body.fileName ?? null,
+    fileSize: body.fileSize ?? null,
+    replyTo: undefined,
+  };
 
   return NextResponse.json(
-    { data: message },
-    { status: 201 }
+    { data: stagedMessage },
+    { status: 202 }
   );
 }
 

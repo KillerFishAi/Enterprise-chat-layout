@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useCallback, useEffect, useRef } from "react";
-import { useChatStream } from "@/hooks/use-chat-stream";
+import { useState, useCallback, useEffect, useRef, useMemo } from "react";
+import { useChatStream, generateClientMsgId, type StreamMessage } from "@/hooks/use-chat-stream";
 import { useRouter } from "next/navigation";
 import { ChatSidebar } from "@/components/chat/chat-sidebar";
 import { ChatArea } from "@/components/chat/chat-area";
@@ -59,6 +59,9 @@ export default function ChatPage() {
   const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
   const [replyingTo, setReplyingTo] = useState<{ id: string; content: string; senderName: string } | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+
+  // ── SeqId 追踪：每个会话的最大已知 seqId ──
+  const [seqIdMap, setSeqIdMap] = useState<Record<string, number>>({});
 
   // 初始加载会话和联系人
   useEffect(() => {
@@ -165,10 +168,22 @@ export default function ChatPage() {
         if (!res.ok) return;
         const json = (await res.json()) as { data?: Message[] };
         if (Array.isArray(json.data) && json.data.length > 0) {
+          // 按 seqId 排序存储
+          const sorted = [...json.data].sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
           setMessages((prev) => ({
             ...prev,
-            [selectedChatId]: json.data!,
+            [selectedChatId]: sorted,
           }));
+
+          // 更新 seqId 追踪
+          const maxSeq = Math.max(...sorted.map((m) => m.seqId ?? 0));
+          if (maxSeq > 0) {
+            setSeqIdMap((prev) => ({
+              ...prev,
+              [selectedChatId]: Math.max(prev[selectedChatId] ?? 0, maxSeq),
+            }));
+          }
+
           const ids = json.data!.map((m) => m.id);
           await fetch(`/api/chats/${selectedChatId}/read`, {
             method: "POST",
@@ -184,18 +199,42 @@ export default function ChatPage() {
     void loadMessages();
   }, [selectedChatId]);
 
-  // 实时消息：优先 WebSocket，降级 SSE
+  // ── 实时消息处理：seqId 排序 + 去重 + 追踪 ──
   const handleStreamMessage = useCallback((chatId: string, data: Message) => {
     setMessages((prev) => {
       const list = prev[chatId] ?? [];
+
+      // 基于 id 和 clientMsgId 双重去重
       if (list.some((m) => m.id === data.id)) return prev;
-      return {
-        ...prev,
-        [chatId]: [...list, data],
-      };
+      if (data.clientMsgId && list.some((m) => m.clientMsgId === data.clientMsgId)) {
+        // clientMsgId 匹配到临时消息 → 用服务器版本替换
+        const updated = list.map((m) =>
+          m.clientMsgId === data.clientMsgId ? { ...data } : m
+        );
+        return { ...prev, [chatId]: updated };
+      }
+
+      // 按 seqId 插入到正确位置（而非简单追加）
+      const newList = [...list, data];
+      if (data.seqId) {
+        newList.sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+      }
+
+      return { ...prev, [chatId]: newList };
     });
+
+    // 更新 seqId 追踪
+    if (data.seqId) {
+      setSeqIdMap((prev) => ({
+        ...prev,
+        [chatId]: Math.max(prev[chatId] ?? 0, data.seqId!),
+      }));
+    }
   }, []);
-  useChatStream(selectedChatId, handleStreamMessage);
+
+  // 订阅所有已加载会话的实时消息
+  const chatIds = useMemo(() => chats.map((c) => c.id), [chats]);
+  const { manualSync } = useChatStream(chatIds, handleStreamMessage, { seqIdMap });
 
   // 打开群设置时加载群成员
   useEffect(() => {
@@ -264,7 +303,7 @@ export default function ChatPage() {
   };
 
   /**
-   * 发送单条消息到服务器
+   * 发送单条消息到服务器（带 clientMsgId 幂等 key）
    */
   const sendMessageToServer = async (payload: {
     content?: string;
@@ -273,8 +312,15 @@ export default function ChatPage() {
     fileName?: string;
     fileSize?: string;
     replyToMessageId?: string;
+    clientMsgId?: string;
   }): Promise<Message | null> => {
     if (!selectedChatId) return null;
+
+    // 自动生成 clientMsgId（如果未提供）
+    const msgPayload = {
+      ...payload,
+      clientMsgId: payload.clientMsgId || generateClientMsgId(),
+    };
 
     try {
       const res = await fetch(`/api/chats/${selectedChatId}/messages`, {
@@ -282,7 +328,7 @@ export default function ChatPage() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify(msgPayload),
       });
 
       if (!res.ok) {
@@ -299,19 +345,40 @@ export default function ChatPage() {
   };
 
   /**
-   * 本地添加消息（乐观更新）
+   * 本地添加消息（乐观更新，seqId 排序插入）
    */
   const addMessageLocally = useCallback((chatId: string, message: Message) => {
     setMessages((prev) => {
       const list = prev[chatId] ?? [];
-      if (list.some((m) => m.id === message.id)) {
-        return prev;
+
+      // 基于 id 去重
+      if (list.some((m) => m.id === message.id)) return prev;
+
+      // 如果有 clientMsgId，替换同 clientMsgId 的临时消息
+      if (message.clientMsgId) {
+        const tempIdx = list.findIndex((m) => m.clientMsgId === message.clientMsgId);
+        if (tempIdx >= 0) {
+          const updated = [...list];
+          updated[tempIdx] = message;
+          return { ...prev, [chatId]: updated };
+        }
       }
-      return {
-        ...prev,
-        [chatId]: [...list, message],
-      };
+
+      // 插入并按 seqId 排序
+      const newList = [...list, message];
+      if (message.seqId) {
+        newList.sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+      }
+      return { ...prev, [chatId]: newList };
     });
+
+    // 更新 seqId 追踪
+    if (message.seqId) {
+      setSeqIdMap((prevMap) => ({
+        ...prevMap,
+        [chatId]: Math.max(prevMap[chatId] ?? 0, message.seqId!),
+      }));
+    }
   }, []);
 
   const handleSendMessage = useCallback(
@@ -322,10 +389,12 @@ export default function ChatPage() {
       if (!attachments || attachments.length === 0) {
         if (!content.trim()) return;
 
+        const clientMsgId = generateClientMsgId();
         const newMessage = await sendMessageToServer({
           content,
           type: "TEXT",
           replyToMessageId,
+          clientMsgId,
         });
         if (newMessage) {
           addMessageLocally(selectedChatId, newMessage);
@@ -338,13 +407,15 @@ export default function ChatPage() {
       for (const attachment of attachments) {
         const replyIdForThis = firstAttachment ? replyToMessageId : undefined;
         firstAttachment = false;
-        // 生成临时 ID 用于乐观更新
-        const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        // 生成 clientMsgId 用于幂等去重和临时消息关联
+        const clientMsgId = generateClientMsgId();
+        const tempId = `temp-${clientMsgId}`;
         const messageType = getMessageType(attachment.type);
 
         // 构造临时消息用于乐观更新（立即显示）
         const tempMessage: Message = {
           id: tempId,
+          clientMsgId,
           content: content || "",
           timestamp: new Date().toISOString(),
           senderId: "current",
@@ -385,7 +456,7 @@ export default function ChatPage() {
             continue;
           }
 
-          // 发送消息到服务器
+          // 发送消息到服务器（携带 clientMsgId 保证幂等）
           const serverMessage = await sendMessageToServer({
             content: content || "",
             type: messageType,
@@ -393,22 +464,26 @@ export default function ChatPage() {
             fileName: uploadResult.name,
             fileSize: uploadResult.size,
             replyToMessageId: replyIdForThis,
+            clientMsgId,
           });
 
           if (serverMessage) {
             // 用服务器返回的消息替换临时消息
             setMessages((prev) => {
               const list = prev[selectedChatId] ?? [];
-              // 移除临时消息（服务器消息会通过 SSE 或这里添加）
-              const filtered = list.filter((m) => m.id !== tempId);
-              // 检查是否已经存在（SSE 可能已经推送）
+              // 移除临时消息（通过 clientMsgId 或 tempId 匹配）
+              const filtered = list.filter(
+                (m) => m.id !== tempId && m.clientMsgId !== clientMsgId
+              );
+              // 检查是否已经存在（WebSocket 可能已经推送）
               if (filtered.some((m) => m.id === serverMessage.id)) {
                 return { ...prev, [selectedChatId]: filtered };
               }
-              return {
-                ...prev,
-                [selectedChatId]: [...filtered, serverMessage],
-              };
+              const newList = [...filtered, serverMessage];
+              if (serverMessage.seqId) {
+                newList.sort((a, b) => (a.seqId ?? 0) - (b.seqId ?? 0));
+              }
+              return { ...prev, [selectedChatId]: newList };
             });
           }
         }
@@ -620,8 +695,8 @@ export default function ChatPage() {
   const handleReplyMessage = useCallback((message: Message) => {
     setReplyingTo({
       id: message.id,
-      content: message.content,
-      senderName: message.senderName,
+      content: message.content ?? "",
+      senderName: message.senderName ?? "未知",
     });
   }, []);
 
@@ -673,7 +748,7 @@ export default function ChatPage() {
           fileName?: string;
           fileSize?: string;
         } = {
-          content: message.content,
+          content: message.content ?? "",
           type: (message.type?.toUpperCase() as "TEXT" | "IMAGE" | "VIDEO" | "FILE") || "TEXT",
         };
         if (message.fileUrl) {

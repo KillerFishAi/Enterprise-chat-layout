@@ -13,6 +13,8 @@ export type MessageType = "text" | "image" | "file" | "video";
 
 export interface Message {
   id: string;
+  seqId?: number;         // 会话内单调递增消息序号
+  clientMsgId?: string;   // 客户端幂等 ID
   content: string;
   timestamp: string;
   senderId: string;
@@ -294,12 +296,23 @@ export function MessageList({
 
       {/* Messages */}
       {messages.map((message, index) => {
+        // #region agent log
+        const hasUndefContent = message.content === undefined || message.replyTo?.content === undefined;
+        const hasUndefName = message.senderName === undefined || message.replyTo?.senderName === undefined;
+        if (hasUndefContent || hasUndefName) {
+          fetch("http://127.0.0.1:7242/ingest/2b6503fa-2fda-4338-ae3c-6481ce886ad7", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ location: "message-list.tsx:map", message: "message undefined content or name", data: { messageId: message.id, hasUndefContent, hasUndefName, contentType: typeof message.content, senderNameType: typeof message.senderName }, timestamp: Date.now(), sessionId: "debug-session", hypothesisId: hasUndefContent ? "H2" : "H3" }) }).catch(() => {});
+        }
+        // #endregion
         const showAvatar =
           !message.isOwn &&
           (index === 0 || messages[index - 1].senderId !== message.senderId);
 
         const showTimestamp = shouldShowTimestamp(index);
         const messageType = message.type || "text";
+        const safeContent = message.content ?? "";
+        const safeSenderName = message.senderName ?? "未知";
+        const safeReplyContent = message.replyTo?.content ?? "";
+        const safeReplySenderName = message.replyTo?.senderName ?? "";
 
         return (
           <div key={message.id}>
@@ -322,8 +335,8 @@ export function MessageList({
               <div className="w-10 shrink-0">
                 {(showAvatar || message.isOwn) && (
                   <div
-                    onContextMenu={(e) => handleAvatarContextMenu(e, message.senderId, message.senderName)}
-                    onTouchStart={(e) => handleAvatarTouchStart(e, message.senderId, message.senderName)}
+                    onContextMenu={(e) => handleAvatarContextMenu(e, message.senderId, safeSenderName)}
+                    onTouchStart={(e) => handleAvatarTouchStart(e, message.senderId, safeSenderName)}
                     onTouchEnd={handleTouchEnd}
                     className={cn(
                       "block rounded transition-opacity select-none",
@@ -333,10 +346,10 @@ export function MessageList({
                     <Avatar className="h-10 w-10 rounded">
                       <AvatarImage
                         src={message.senderAvatar || "/placeholder.svg"}
-                        alt={message.senderName}
+                        alt={safeSenderName}
                       />
                       <AvatarFallback className="bg-muted text-muted-foreground text-xs font-medium rounded">
-                        {message.senderName
+                        {(safeSenderName || "?")
                           .split(" ")
                           .map((n) => n[0])
                           .join("")
@@ -361,7 +374,7 @@ export function MessageList({
                 {/* Sender name for group chats */}
                 {!message.isOwn && showAvatar && (
                   <p className="text-[12px] text-muted-foreground mb-1 ml-0.5">
-                    {message.senderName}
+                    {safeSenderName}
                   </p>
                 )}
 
@@ -376,12 +389,12 @@ export function MessageList({
                           : "border-chat-bubble-other text-chat-bubble-other-foreground/80"
                       )}
                     >
-                      <span className="font-medium">{message.replyTo.senderName}</span>
-                      <span className="ml-1 opacity-90">{message.replyTo.content}</span>
+                      <span className="font-medium">{safeReplySenderName}</span>
+                      <span className="ml-1 opacity-90">{safeReplyContent}</span>
                     </div>
                   )}
                   {messageType === "text" && (
-                    <TextBubble content={message.content} isOwn={message.isOwn} />
+                    <TextBubble content={safeContent} isOwn={message.isOwn} />
                   )}
                   {messageType === "image" && message.imageUrl && (
                     <ImageBubble
@@ -418,8 +431,9 @@ export function MessageList({
         onReply={() => messageContextMenu.message && onReplyMessage?.(messageContextMenu.message)}
         onPin={() => messageContextMenu.message && onPinMessage?.(messageContextMenu.message)}
         onCopy={() => {
-          if (messageContextMenu.message?.content) {
-            navigator.clipboard.writeText(messageContextMenu.message.content);
+          const text = messageContextMenu.message?.content ?? "";
+          if (text) {
+            navigator.clipboard.writeText(text);
           }
           onCopyMessage?.(messageContextMenu.message!);
         }}

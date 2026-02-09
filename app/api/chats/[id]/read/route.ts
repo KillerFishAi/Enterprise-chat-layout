@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { getAuthTokenFromRequest, verifyAuthToken } from "@/lib/auth";
+import { decrUserUnread } from "@/lib/redis";
 
 type RouteParams = { params: Promise<{ id: string }> };
 
@@ -43,6 +44,9 @@ export async function POST(req: NextRequest, { params }: RouteParams) {
     })),
     skipDuplicates: true,
   });
+
+  // 扣减角标未读数，与离线推送的 incr 对应
+  await decrUserUnread(payload.userId, validIds.length);
 
   return NextResponse.json({ data: { marked: validIds.length } });
 }

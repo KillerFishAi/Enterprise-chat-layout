@@ -56,25 +56,17 @@ export async function POST(req: NextRequest) {
 
     const token = signAuthToken(user.id);
 
-    const response = NextResponse.json({
-      data: {
-        id: user.id,
-        account: user.account,
-        phone: user.phone,
-        email: user.email,
-        nickname: user.nickname,
-      },
-    });
+    // 仅当明确配置 COOKIE_SECURE=true 时才用 Secure（HTTPS）；用 HTTP 访问时必须为 false，否则浏览器不保存 Cookie，登录后无法跳转
+    const secure = process.env.COOKIE_SECURE === "true";
 
-    // HTTP 访问时不要设 Secure，否则浏览器不保存 Cookie，登录后无法跳转
-    const useSecureCookie =
-      process.env.COOKIE_SECURE === "true" ||
-      (process.env.NODE_ENV === "production" && process.env.COOKIE_SECURE !== "false");
+    // 方案：用 302 重定向到首页，并在同一响应里 Set-Cookie，浏览器会保存 Cookie 并跳转，比“返回 JSON + 前端再跳转”更可靠（尤其 HTTP / IP 访问）
+    const redirectUrl = new URL("/", req.url);
+    const response = NextResponse.redirect(redirectUrl, 302);
 
     response.cookies.set("token", token, {
       httpOnly: true,
       sameSite: "lax",
-      secure: useSecureCookie,
+      secure,
       path: "/",
       maxAge: 60 * 60 * 24 * 7, // 7 days
     });

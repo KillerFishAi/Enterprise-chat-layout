@@ -38,6 +38,7 @@ export default function LoginPage() {
           headers: {
             "Content-Type": "application/json",
           },
+          credentials: "include", // 确保接受并携带 Cookie（登录后跳转依赖此）
           body: JSON.stringify({
             account: formData.account,
             password: formData.password,
@@ -49,8 +50,8 @@ export default function LoginPage() {
           throw new Error(data?.error ?? "登录失败");
         }
 
-        // 这里可以根据需要保存返回的用户信息或 token
-        router.push("/");
+        // 使用整页跳转，确保浏览器在下一次请求时带上刚设置的 Cookie（client 路由有时不会带新 Cookie）
+        window.location.href = "/";
         return;
       }
 
@@ -136,6 +137,7 @@ export default function LoginPage() {
                   <Label htmlFor="account">账号</Label>
                   <Input
                     id="account"
+                    autoComplete="username"
                     placeholder="请输入账号"
                     value={formData.account}
                     onChange={(e) => setFormData({ ...formData, account: e.target.value })}
@@ -148,6 +150,7 @@ export default function LoginPage() {
                     <Input
                       id="password"
                       type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
                       placeholder="请输入密码"
                       value={formData.password}
                       onChange={(e) => setFormData({ ...formData, password: e.target.value })}
