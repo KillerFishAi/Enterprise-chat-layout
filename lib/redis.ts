@@ -11,6 +11,7 @@ const OFFLINE_QUEUE_PREFIX = "offline:msgs:";    // 离线消息队列
 const ACK_KEY_PREFIX = "user:ack:";             // 用户已确认的最大 seqId
 const WS_ONLINE_PREFIX = "user:ws:";            // WebSocket 活跃连接标记
 const UNREAD_KEY_PREFIX = "user:unread:";       // 用户总未读数（角标用）
+const MESSAGE_DLQ_KEY = "msg:dlq";              // 消息死信队列（仅用于排障）
 
 // ─── Redis 健康状态追踪 ──────────────────────────────────────
 let redisAvailable = true;
@@ -385,6 +386,36 @@ export async function getUserLastAcks(
     },
     {} as Record<string, number>,
     "getUserLastAcks"
+  );
+}
+
+// ─── 消息死信队列（DLQ） ───────────────────────────────────────
+
+/**
+ * 将无法持久化的消息写入 DLQ，方便后续排查。
+ * 注意：这是用于排障的“黑匣子”，不要作为业务读路径。
+ */
+export async function addMessageToDLQ(entry: {
+  conversationId: string;
+  senderId: string;
+  seqId: number;
+  clientMsgId?: string | null;
+  reason: string;
+}): Promise<void> {
+  const record = {
+    ...entry,
+    clientMsgId: entry.clientMsgId ?? null,
+    ts: new Date().toISOString(),
+  };
+
+  await safeRedisOp(
+    async (c) => {
+      await c.rpush(MESSAGE_DLQ_KEY, JSON.stringify(record));
+      // 保留 7 天，防止无限堆积
+      await c.expire(MESSAGE_DLQ_KEY, 7 * 24 * 60 * 60);
+    },
+    undefined,
+    "addMessageToDLQ"
   );
 }
 

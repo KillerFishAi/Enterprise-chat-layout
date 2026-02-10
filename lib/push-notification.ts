@@ -8,6 +8,7 @@
  */
 
 import { prisma } from "@/lib/db";
+import apn from "@parse/node-apn";
 
 // ─── 类型定义 ─────────────────────────────────────────────────
 
@@ -76,21 +77,18 @@ export async function sendPushToUser(
   const tokens = await getDeviceTokens(userId);
   if (tokens.length === 0) return { sent: 0, failed: 0 };
 
+  // 并行发送，避免多设备用户串行阻塞
+  const results = await Promise.allSettled(
+    tokens.map(({ token, platform }) =>
+      platform === "fcm" ? sendFCM(token, payload) : sendAPNs(token, payload)
+    )
+  );
+
   let sent = 0;
   let failed = 0;
-
-  for (const { token, platform } of tokens) {
-    try {
-      if (platform === "fcm") {
-        await sendFCM(token, payload);
-      } else {
-        await sendAPNs(token, payload);
-      }
-      sent++;
-    } catch (err) {
-      console.error(`[push] send failed (${platform}):`, err);
-      failed++;
-    }
+  for (const r of results) {
+    if (r.status === "fulfilled") sent++;
+    else failed++;
   }
 
   return { sent, failed };
@@ -185,19 +183,33 @@ async function sendAPNs(token: string, payload: PushPayload): Promise<void> {
     return;
   }
 
-  // 使用 @parse/node-apn 或 node-apn 需要额外依赖；这里用 HTTP/2 的 APNs API 占位
-  // 生产环境建议：npm install apn 或 node-apn，然后调用 provider.send(notification, token)
-  const apnPayload = {
-    aps: {
-      alert: { title: payload.title, body: payload.body },
-      sound: "default",
-      badge: payload.data.unreadCount,
-      "mutable-content": 1,
-    },
+  // 单例 Provider，避免每条推送都重新建连接
+  // 注意：进程退出前应调用 provider.shutdown()，这里交由 Node 进程生命周期管理
+  const provider =
+    (global as any).__apnProvider ||
+    new apn.Provider({
+      token: {
+        key: keyPath,
+        keyId,
+        teamId,
+      },
+      production: process.env.NODE_ENV === "production",
+    });
+  (global as any).__apnProvider = provider;
+
+  const note = new apn.Notification();
+  note.expiry = Math.floor(Date.now() / 1000) + 3600; // 1 小时过期
+  note.badge = payload.data.unreadCount;
+  note.sound = "default";
+  note.alert = { title: payload.title, body: payload.body };
+  note.payload = {
     ...payload.data,
     unreadCount: payload.data.unreadCount,
   };
+  note.topic = bundleId;
 
-  // 占位：实际发送需引入 apn 包并配置 .p8 证书
-  console.log("[push] APNs (stub) would send to", token.slice(0, 16) + "...", apnPayload);
+  const result = await provider.send(note, token);
+  if (result.failed && result.failed.length > 0) {
+    throw new Error(`APNs failed: ${JSON.stringify(result.failed[0]?.response ?? result.failed[0])}`);
+  }
 }

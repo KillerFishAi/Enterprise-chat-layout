@@ -35,6 +35,12 @@ export async function POST(req: NextRequest) {
   const platform = (body.platform?.toLowerCase() === "apns" ? "apns" : "fcm") as "fcm" | "apns";
   const resolved = body.platform ? platform : inferPlatform(rawToken);
 
+  // 确保同一物理设备（token）只属于当前登录用户：
+  // 先清理所有绑定到该 token 的旧记录，避免“幽灵设备”收到其他账号推送
+  await prisma.deviceToken.deleteMany({
+    where: { token: rawToken },
+  });
+
   await prisma.deviceToken.upsert({
     where: {
       userId_token: { userId: payload.userId, token: rawToken },

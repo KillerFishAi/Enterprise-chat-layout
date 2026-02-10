@@ -174,14 +174,30 @@ async function sendOfflinePush(userId, chatId, messageId, conversationName, isGr
 
 async function flushOfflineMessages(userId) {
   const key = OFFLINE_QUEUE_KEY(userId);
+  const LIMIT = 200; // 单次最多回放 200 条离线消息，其余交给 Sync 补偿
+
   const pipeline = redisStore.pipeline();
-  pipeline.lrange(key, 0, -1);
-  pipeline.del(key);
+  // 只取前 LIMIT 条，避免一次性拉取超大队列造成内存压力
+  pipeline.lrange(key, 0, LIMIT - 1);
+  // 保留后续消息，下次登录或通过其它机制再补偿
+  pipeline.ltrim(key, LIMIT, -1);
+  // 查看是否还有剩余离线消息
+  pipeline.llen(key);
   const results = await pipeline.exec();
-  if (!results || !results[0] || !results[0][1]) return [];
-  return results[0][1].map((raw) => {
-    try { return JSON.parse(raw); } catch { return null; }
-  }).filter(Boolean);
+  if (!results || !results[0] || !results[0][1]) {
+    return { messages: [], truncated: false };
+  }
+  const messages = results[0][1]
+    .map((raw) => {
+      try {
+        return JSON.parse(raw);
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
+  const remaining = results[2]?.[1] ?? 0;
+  return { messages, truncated: remaining > 0 };
 }
 
 // ─── 消息投递（带 Ack 重传） ──────────────────────────────────
@@ -425,11 +441,15 @@ io.on("connection", async (socket) => {
 
   // 4. 推送离线消息队列
   try {
-    const offlineMessages = await flushOfflineMessages(userId);
+    const { messages: offlineMessages, truncated } = await flushOfflineMessages(userId);
     if (offlineMessages.length > 0) {
       console.log(`[ws] Flushing ${offlineMessages.length} offline messages to ${userId}`);
       for (const { chatId, payload } of offlineMessages) {
         sendWithAck(socket, chatId, payload);
+      }
+      // 若仍有剩余离线消息未回放，提示客户端主动发起 Sync 补偿
+      if (truncated) {
+        socket.emit("offline_truncated");
       }
     }
   } catch (err) {

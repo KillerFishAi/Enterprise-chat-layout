@@ -351,6 +351,14 @@ export function useChatStream(
         }
       });
 
+      // 离线消息被截断：服务端仅回放了部分离线，提示客户端主动 Sync 补偿
+      socket.on("offline_truncated", () => {
+        console.log("[ws-hook] offline_truncated received, triggering sync for all chats");
+        if (socket && socket.connected) {
+          syncOnReconnect(socket);
+        }
+      });
+
       socket.on("disconnect", (reason) => {
         console.log(`[ws-hook] Disconnected: ${reason}`);
         // Socket.IO 会自动重连，不需要手动处理
