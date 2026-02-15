@@ -47,6 +47,8 @@ const WS_SERVER_VARS = [
   { name: "REDIS_URL", desc: "Redis 连接（WebSocket 服务必填）" },
   { name: "JWT_SECRET", desc: "JWT 签名密钥（WebSocket 鉴权必填）" },
   { name: "DATABASE_URL", desc: "数据库连接（WebSocket 成员校验必填）" },
+  { name: "INTERNAL_API_SECRET", desc: "内部 API 密钥（离线推送等必填，与 Next 一致）" },
+  { name: "APP_URL", desc: "Next 应用地址（离线推送时必填，如 http://app:3000）" },
   { name: "SOCKET_PORT", desc: "WebSocket 端口（可选，默认 3001）" },
 ];
 

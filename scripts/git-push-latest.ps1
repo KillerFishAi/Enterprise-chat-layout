@@ -1,7 +1,14 @@
 # 在项目根目录执行：将当前所有改动提交并推送到远程仓库
 # 用法：在 PowerShell 中 cd 到项目根目录后执行 .\scripts\git-push-latest.ps1
 
-Set-Location $PSScriptRoot\..
+$repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
+# 在含中文路径下用 8.3 短路径执行 git，避免 "not a git repository"
+try {
+    $fso = New-Object -ComObject Scripting.FileSystemObject
+    $folder = $fso.GetFolder($repoRoot)
+    if ($folder.ShortPath -and $folder.ShortPath -ne $repoRoot) { $repoRoot = $folder.ShortPath }
+} catch { }
+Set-Location -LiteralPath $repoRoot
 
 $status = git status --porcelain
 if (-not $status) {

@@ -42,9 +42,9 @@ services:
       NODE_ENV: production
       DATABASE_URL: postgresql://chat_user:chat_pass@db:5432/chat_app
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: CHANGE_ME_IN_PRODUCTION
-      # 用 http 访问时设为 false，否则 Cookie 不会被保存，登录后无法跳转
-      COOKIE_SECURE: "false"
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     restart: always
 
   ws:
@@ -52,9 +52,11 @@ services:
     command: ["node", "server/ws-server.js"]
     environment:
       REDIS_URL: redis://redis:6379
-      JWT_SECRET: CHANGE_ME_IN_PRODUCTION
+      JWT_SECRET: ${JWT_SECRET:-CHANGE_ME_IN_PRODUCTION}
       DATABASE_URL: postgresql://chat_user:chat_pass@db:5432/chat_app
       SOCKET_PORT: "3001"
+      APP_URL: ${APP_URL:-http://app:3000}
+      INTERNAL_API_SECRET: ${INTERNAL_API_SECRET:-}
     depends_on:
       - redis
     ports:

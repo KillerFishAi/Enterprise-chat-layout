@@ -5,9 +5,11 @@ import { io, Socket } from "socket.io-client";
 import type { Message } from "@/components/chat/message-list";
 
 // ─── 配置 ─────────────────────────────────────────────────────
+// 生产环境可配置 NEXT_PUBLIC_WS_URL（如 wss://ws.example.com），否则默认当前 host + 3001
 const WS_URL =
   typeof window !== "undefined"
-    ? `${window.location.protocol === "https:" ? "https:" : "http:"}//${window.location.hostname}:3001`
+    ? (process.env.NEXT_PUBLIC_WS_URL ||
+        `${window.location.protocol === "https:" ? "https:" : "http:"}//${window.location.hostname}:3001`)
     : "";
 const SOCKET_CONNECT_TIMEOUT = 4000;
 const RECONNECT_SYNC_DELAY = 500;  // 重连后延迟同步时间
