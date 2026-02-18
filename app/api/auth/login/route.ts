@@ -60,7 +60,10 @@ export async function POST(req: NextRequest) {
     const secure = process.env.COOKIE_SECURE === "true";
 
     // 方案：用 302 重定向到首页，并在同一响应里 Set-Cookie，浏览器会保存 Cookie 并跳转，比“返回 JSON + 前端再跳转”更可靠（尤其 HTTP / IP 访问）
-    const redirectUrl = new URL("/", req.url);
+    // 使用请求头 Host 拼跳转地址，避免在 Docker 等环境下 req.url 为内网/localhost 导致浏览器跳到 localhost
+    const host = req.headers.get("host") || "localhost:3000";
+    const protocol = req.headers.get("x-forwarded-proto") ?? "http";
+    const redirectUrl = new URL("/", `${protocol}://${host}`);
     const response = NextResponse.redirect(redirectUrl, 302);
 
     response.cookies.set("token", token, {
